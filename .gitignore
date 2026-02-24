@@ -1,0 +1,6 @@
+json_data/
+xl_data/
+build/
+dist/
+.env*
+__pycache__/
