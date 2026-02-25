@@ -311,7 +311,7 @@ def save_rebooks_to_db(df: pd.DataFrame) -> int:
             if keep.empty:
                 continue
 
-            # Phone comes from next row (same trick as Excel)
+            # Phone comes from next row 
             keep[PHONE_COLUMN] = next_text.loc[keep.index].apply(extract_phone_numbers)
 
             # formatted_time from time

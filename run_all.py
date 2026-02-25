@@ -5,11 +5,10 @@ from datetime import datetime, timedelta, time as dtime
 from zoneinfo import ZoneInfo  # Python 3.9+
 import pytz
 from sqlalchemy import delete, select
-
 from database.database import init_db, init_sqlite, session_scope
 from database.models import NwasLogsheet, UpdateLogsheet, RebookJobs, AppMeta
 
-# === Your tasks ===
+# === Tasks ===
 from get_nwas_data import main as run_nwas
 from get_address_from_ghost import main as run_ghost
 from update_booking_time import main as update_booking_time

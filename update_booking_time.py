@@ -97,6 +97,7 @@ def update_booking_time(booking_id, new_time, jrny_ids):
         mark_jrny_ids_booked(UpdateLogsheet, jrny_ids, "updated")
         return post_resp.json()
     else:
+        mark_jrny_ids_booked(UpdateLogsheet, jrny_ids, "skipped")
         print(f"Failed to update booking {booking_id}: {post_resp.text if post_resp else 'No response'}")
         return None
 
@@ -118,15 +119,15 @@ def process_updates(jobs_to_update_df, booking_log):
         else:
             new_time = update_info["new_time"]
 
-        # Clamp to now if earlier
-        nt = pd.to_datetime(new_time)
-        if nt.tzinfo is None:
-            nt = uk_tz.localize(nt)
+        # Clamp time to now if earlier so job is not updated to a past time which would cause errors
+        now_time = pd.to_datetime(new_time)
+        if now_time.tzinfo is None:
+            now_time = uk_tz.localize(now_time)
         now_uk = datetime.now(uk_tz)
-        if nt < now_uk:
-            nt = now_uk
+        if now_time < now_uk:
+            now_time = now_uk
 
-        update_booking_time(booking_id, nt.isoformat(), update_info["jrny_ids"])
+        update_booking_time(booking_id, now_time.isoformat(), update_info["jrny_ids"])
 
 
 def find_latest_times(df, booking_map):

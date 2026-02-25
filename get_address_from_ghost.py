@@ -315,15 +315,7 @@ def fetch_address(db_name, query, jrny_id):
 
     print(f"[WARN] Could not resolve address: {q_original}")
     mark_jrny_ids_booked(db_name, [jrny_id], status="skipped")
-    #send_mail(q_original, jrny_id)
-
-    # if jrny_id:
-    #     try:
-    #         excel_path = "xl_data/nwas_logsheet.xlsx"
-    #         mark_journeys_as_booked_by_reference(excel_path, str(jrny_id))
-    #         print(f"[INFO] Marked journey {jrny_id} as booked after failure.")
-    #     except Exception as e:
-    #         print(f"[ERROR] Failed to mark journey {jrny_id} as booked: {e}")
+    send_mail(q_original, jrny_id)
 
     return None
 
@@ -403,31 +395,23 @@ def process_file(jobs_df, db_name):
     generate_json_from_df(jobs_df, db_name)
 
 
-def load_jobs_to_process():
+def load_jobs_to_process(db_name):
     with session_scope() as session:
-        status_norm = func.lower(func.trim(func.coalesce(NwasLogsheet.status, "")))
-        columns = [c for c in NwasLogsheet.__table__.columns]
+        status_norm = func.lower(func.trim(func.coalesce(db_name.status, "")))
+        columns = [c for c in db_name.__table__.columns]
         stmt = select(*columns).where(status_norm.notin_(["booked", "error", "skipped"]))
         results = session.execute(stmt).mappings().all()
         return pd.DataFrame(results)
     
 
-def load_jobs_to_rebook():
-    with session_scope() as session:
-        status_norm = func.lower(func.trim(func.coalesce(RebookJobs.status, "")))
-        columns = [c for c in RebookJobs.__table__.columns]
-        stmt = select(*columns).where(status_norm.notin_(["booked", "error", "skipped"]))
-        results = session.execute(stmt).mappings().all()
-        return pd.DataFrame(results)
-
 def main():
-    jobs_df = load_jobs_to_process()
+    jobs_df = load_jobs_to_process(NwasLogsheet)
     if jobs_df.empty:
         print("No unbooked jobs found in the database.")
         return
     process_file(jobs_df, db_name=NwasLogsheet)  # Pass the DataFrame to be processed and enriched
 
-    jobs_to_rebook_df = load_jobs_to_rebook()
+    jobs_to_rebook_df = load_jobs_to_process(RebookJobs)
     if jobs_to_rebook_df.empty:
         print("No jobs to rebook found in the database.")
         return     

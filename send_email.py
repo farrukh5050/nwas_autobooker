@@ -18,6 +18,8 @@ dotenv_path = base_path / ".env"
 load_dotenv(dotenv_path)
 
 EMAIL_PASSWORD = str(os.getenv("EMAIL_PASSWORD"))
+CC_RAW = os.getenv("CC", "") 
+cc = [email.strip() for email in CC_RAW.split(",") if email.strip()]
 
 def send_mail(query, jrny_id=None):
     subject = "Ghost failed to resolve address"
@@ -60,4 +62,4 @@ def send_mail(query, jrny_id=None):
 
 
 if __name__ == "__main__":
-    send_mail("Test query", "12345")
+    send_mail("Test query", "This is a test email please ignore.")
