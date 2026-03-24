@@ -1,6 +1,8 @@
 import time
+import os
 import random
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta, time as dtime
 from zoneinfo import ZoneInfo  # Python 3.9+
 import pytz
@@ -15,9 +17,8 @@ from update_booking_time import main as update_booking_time
 
 uk_tz = pytz.timezone("Europe/London")
 
-RESET_KEY = "nwas_logsheet_last_reset_date"  # stored as YYYY-MM-DD
-
 # === Config ===
+RESET_KEY = "nwas_logsheet_last_reset_date"  # stored as YYYY-MM-DD
 TZ = ZoneInfo("Europe/London")
 OPERATING_START_HOUR = 5
 OPERATING_END_HOUR = 21
@@ -26,6 +27,7 @@ LOG_MAX_BYTES = 2_000_000
 LOG_BACKUP_COUNT = 5
 JITTER_MAX_SECONDS = 1.5
 
+os.makedirs("logs", exist_ok=True)  # Ensure logs directory exists
 
 def reset_db_once_per_day():
     """
@@ -61,6 +63,20 @@ def reset_db_once_per_day():
 # === Time helpers ===
 def now() -> datetime:
     return datetime.now(TZ)
+
+# === Logging setup ===
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+handler = RotatingFileHandler(
+    "app_log.log",
+    maxBytes=LOG_MAX_BYTES,
+    backupCount=LOG_BACKUP_COUNT,
+)
+logging.getLogger().addHandler(handler)
+
 
 
 def within_operating_hours(dt: datetime) -> bool:
@@ -149,6 +165,7 @@ def main() -> None:
                 ("run_ghost", run_ghost),
                 # Update booking times in Autocab based on NWAS data
                 ("update_booking_time", update_booking_time),
+
             ]:
                 try:
                     fn()

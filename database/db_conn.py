@@ -138,6 +138,7 @@ def save_to_db(df: pd.DataFrame,) -> int:
                     from_address=str(row.get("from", "") or ""),
                     to_address=str(row.get("to", "") or ""),
                     esc=str(row.get("esc", "") or ""),
+                    mob=str(row.get("mob", "") or ""),
                     notes=str(row.get("notes", "") or ""),
                     phone_number=str(row.get("phone no", "") or ""),
                     formatted_time=ftime,
@@ -190,7 +191,6 @@ def save_updates_to_db(df: pd.DataFrame) -> int:
             full_row["type"] = row_type
             full_row["formatted_time"] = format_time_string(current_row.get("time", ""))
             matched_rows.append(full_row)
-            inserted += 1
 
     # Step 2: R-times
     for _, row in df.iterrows():
@@ -211,7 +211,6 @@ def save_updates_to_db(df: pd.DataFrame) -> int:
     updates_df[JRNY_ID_COLUMN] = updates_df[JRNY_ID_COLUMN].astype(str).str.strip()
     updates_df["formatted_time"] = updates_df["formatted_time"].astype(str).str.strip()
     updates_df["cost_center"] = updates_df["cost_center"].astype(str).str.strip()
-
 
     with session_scope() as db:
         for cost_center, group in updates_df.groupby("cost_center"):
@@ -248,6 +247,7 @@ def save_updates_to_db(df: pd.DataFrame) -> int:
                     from_address=str(row.get("from", "") or ""),
                     to_address=str(row.get("to", "") or ""),
                     esc=str(row.get("esc", "") or ""),
+                    mob=str(row.get("mob", "") or ""),
                     notes=str(row.get("notes", "") or ""),
                     phone_number=str(row.get("phone no", "") or ""),
                     formatted_time=ftime,
@@ -348,6 +348,7 @@ def save_rebooks_to_db(df: pd.DataFrame) -> int:
                         from_address=str(row.get("from", "") or ""),
                         to_address=str(row.get("to", "") or ""),
                         esc=str(row.get("esc", "") or ""),
+                        mob=str(row.get("mob", "" or "")),
                         notes=str(row.get("notes", "") or ""),
                         phone_number=str(row.get("phone no", "") or ""),
                         formatted_time=ftime,

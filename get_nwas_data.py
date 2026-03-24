@@ -14,13 +14,14 @@ from selenium.common.exceptions import NoSuchElementException
 import sys
 from selenium.webdriver.chrome.options import Options
 from database.db_conn import save_to_db, save_updates_to_db, save_rebooks_to_db
+from database.database import init_db, init_sqlite, session_scope
 
 # Constants
 JRNY_ID_COLUMN = "jrny id"
 PHONE_COLUMN = "phone no"
 UNWANTED_TEXT = ">>>>>"
 RUN_COLUMN = "run"  # Ensure this matches the column containing cost centers
-COLS_TO_DROP = ["age", "mob", "cat", "description", "time", "cost_center"]
+COLS_TO_DROP = ["age", "cat", "description", "time", "cost_center"]
 UPDATE_COLS_TO_DROP = ["time", "cost_center"]
 FILENAME = "xl_data/nwas_logsheet.xlsx"
 UPDATE_FILENAME = "xl_data/nwas_logsheet_update.xlsx"
@@ -245,6 +246,8 @@ def clean_table(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main():
+    init_sqlite()
+    init_db()
     driver = open_chrome_and_login()
 
     try:
