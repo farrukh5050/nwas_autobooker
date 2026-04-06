@@ -71,7 +71,7 @@ logging.basicConfig(
 )
 
 handler = RotatingFileHandler(
-    "app_log.log",
+    "logs/app_log.log",
     maxBytes=LOG_MAX_BYTES,
     backupCount=LOG_BACKUP_COUNT,
 )
@@ -157,7 +157,6 @@ def main() -> None:
                 next_reset_at = next_reset_datetime(t)
 
             # Run tasks (errors per task)
-            logging.info(f"Running jobs at {now().strftime('%Y-%m-%d %H:%M:%S %Z')}")
             for name, fn in [
                 # Get NWAS data and save to DB
                 ("run_nwas", run_nwas),
@@ -169,13 +168,11 @@ def main() -> None:
             ]:
                 try:
                     fn()
-                    logging.info(f"{name} completed successfully")
+                    # logging.info(f"{name} completed successfully")
                 except SystemExit as e:  # PATCH: don't let sys.exit kill the scheduler
-                    logging.warning(
-                        f"{name} exited with code {getattr(e, 'code', None)}; continuing scheduler"
-                    )
+                    print(f"{name} exited with code {getattr(e, 'code', None)}; continuing scheduler")
                 except Exception as e:
-                    logging.error(f"{name} failed: {e!r}")
+                    print(f"{name} failed: {e!r}")
 
             # Sleep until next cycle or cutoff
             remaining_today = seconds_until_end(now())

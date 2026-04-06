@@ -193,7 +193,7 @@ def load_jobs_to_process():
 
 
 def main():
-    # Step 1: reload Excel (some rows will now be marked as booked/updated)
+    # Step 1: Reload any booking that need to be processed (not marked as updated/skipped)
     booking_log = get_today_json()
     combined_df = load_jobs_to_process()
 

@@ -260,7 +260,6 @@ def save_updates_to_db(df: pd.DataFrame) -> int:
 
         return inserted
 
-
 def save_rebooks_to_db(df: pd.DataFrame) -> int:
     if df is None or df.empty:
         return 0
@@ -275,52 +274,54 @@ def save_rebooks_to_db(df: pd.DataFrame) -> int:
         df[RUN_COLUMN].astype(str).str.contains("Run", na=False)
     ).ffill()
 
-    # Normalise IDs
+    # Keep >>>>> rows, they contain CANCELLED / ABORTED markers
     df[JRNY_ID_COLUMN] = df[JRNY_ID_COLUMN].astype(str).str.strip()
 
-    # Ensure cost_center (you already do this elsewhere)
     if "cost_center" not in df.columns:
         df["cost_center"] = (
             df[JRNY_ID_COLUMN]
             .str.extract(r"((?:STC|SPH)[A-Z0-9]+)", expand=False)
             .ffill()
-            .infer_objects(copy=False)
             .astype("string")
         )
 
     inserted = 0
 
     with session_scope() as db:
-        # IMPORTANT: group by cost_center + run (so Run 1 and Run 3 are separate)
-        for (cost_center, run_name), group in df.groupby(["cost_center", RUN_COLUMN]):
+        for (cost_center, run_name), group in df.groupby(["cost_center", RUN_COLUMN], dropna=False):
             group = group.reset_index(drop=True)
 
-            # Identify journey rows (8 digit id)
-            is_journey = group[JRNY_ID_COLUMN].str.match(r"^\d{8}$", na=False)
+            # Valid journey rows are numeric jrny ids
+            is_journey = group[JRNY_ID_COLUMN].astype(str).str.strip().str.isdigit()
 
-            # For each journey row, look at next row for cancelled/aborted
-            next_text = group.shift(-1).astype(str).agg(" ".join, axis=1)
-            journey_is_cancelled = is_journey & next_text.str.contains(r"\b(?:cancelled|aborted)\b", case=False, na=False, regex=True)
+            # Look at the next row text to detect CANCELLED / ABORTED
+            next_text = group.shift(-1).fillna("").astype(str).agg(" ".join, axis=1)
 
-            # If NO cancellations in this run, skip
+            # A cancelled journey is a numeric journey row whose next row contains the marker
+            journey_is_cancelled = is_journey & next_text.str.contains(
+                r"\b(?:cancelled|aborted)\b",
+                case=False,
+                na=False,
+                regex=True,
+            )
+
+            # Only runs with at least one cancelled/aborted journey are relevant
             if not journey_is_cancelled.any():
                 continue
 
-            # We want journeys that are NOT cancelled (but only within runs that contain cancellations)
+            # Keep the OTHER valid journeys in that run
             keep = group[is_journey & ~journey_is_cancelled].copy()
             if keep.empty:
                 continue
 
-            # Phone comes from next row 
+            # Pull phone from the next row text
             keep[PHONE_COLUMN] = next_text.loc[keep.index].apply(extract_phone_numbers)
 
-            # formatted_time from time
+            # Build formatted_time
             if "time" not in keep.columns:
-                # if time column ever missing, just skip these (or raise if you prefer)
                 continue
             keep["formatted_time"] = keep["time"].apply(format_time_string)
 
-            # Insert each kept journey
             for _, row in keep.iterrows():
                 jrny = str(row.get(JRNY_ID_COLUMN, "")).strip()
                 ftime = str(row.get("formatted_time", "")).strip()
@@ -348,7 +349,7 @@ def save_rebooks_to_db(df: pd.DataFrame) -> int:
                         from_address=str(row.get("from", "") or ""),
                         to_address=str(row.get("to", "") or ""),
                         esc=str(row.get("esc", "") or ""),
-                        mob=str(row.get("mob", "" or "")),
+                        mob=str(row.get("mob", "") or ""),
                         notes=str(row.get("notes", "") or ""),
                         phone_number=str(row.get("phone no", "") or ""),
                         formatted_time=ftime,
@@ -359,7 +360,6 @@ def save_rebooks_to_db(df: pd.DataFrame) -> int:
                 inserted += 1
 
     return inserted
-
 
 def mark_jrny_ids_booked(db_name, jrny_ids: list[int | str], status: str) -> int:
     """Mark the given jrny_ids as booked in the database."""

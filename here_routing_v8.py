@@ -206,8 +206,9 @@ def build_metadata(passengers):
         [str(int(p.get("jrny_id"))) for p in passengers if pd.notna(p.get("jrny_id"))]
     )
 
+    mob = [p.get("mob") for p in passengers]
     # now we return extra_phones as well
-    return names, primary_phone, job_note, refs, extra_phones
+    return names, primary_phone, job_note, refs, extra_phones, mob
 
 
 def adjust_pickup_time_next_year(
@@ -539,6 +540,25 @@ def build_office_note(passengers, extra_phones, appt_time, pickup_is_hospital):
     parts.extend(named_extras)
     return " | ".join(parts)
 
+def get_capabilities(passengers, pickup_is_hospital):
+    has_w1 = any(
+        str(p.get("mob")).strip().upper() == "W1"
+        for p in passengers
+    )
+
+    # Rule 1: W1 + hospital
+    if has_w1 and pickup_is_hospital:
+        return [35, 38]
+
+    # (optional) W1 but NOT hospital
+    if has_w1:
+        return [38]  # N capability
+
+    # fallback (your existing logic)
+    if pickup_is_hospital:
+        return CAPABILITIES # [35] default
+
+    return []
 
 def generate_json_from_df(df, db_name):
     df["unique_run"] = df["cost_center"].astype(str) + "_" + df["run"].astype(str)
@@ -645,7 +665,7 @@ def generate_json_from_df(df, db_name):
 
                 passengers = rdf.to_dict(orient="records")
 
-                name, primary_phone, job_note, ref, extra_phones = build_metadata(
+                name, primary_phone, job_note, ref, extra_phones, mob = build_metadata(
                     passengers
                 )
                 pickup_text = routing["pickup"]["address"]["text"]
@@ -696,9 +716,8 @@ def generate_json_from_df(df, db_name):
                     appt_time=appt_time,
                     pickup_is_hospital=pickup_is_hospital,
                 )
-
                 results[run_name] = {
-                    "capabilities": CAPABILITIES if pickup_is_hospital else [],
+                    "capabilities": get_capabilities(passengers, pickup_is_hospital),
                     "companyId": COMPANY_ID,
                     "customerId": CUSTOMER_ID,
                     "pickup": routing["pickup"],

@@ -12,14 +12,15 @@ from dotenv import load_dotenv
 from pathlib import Path
 from selenium.common.exceptions import NoSuchElementException
 import sys
+import base64
 from selenium.webdriver.chrome.options import Options
 from database.db_conn import save_to_db, save_updates_to_db, save_rebooks_to_db
-from database.database import init_db, init_sqlite, session_scope
+from database.database import init_db, init_sqlite
+from selenium.webdriver.chrome.service import Service
 
 # Constants
 JRNY_ID_COLUMN = "jrny id"
 PHONE_COLUMN = "phone no"
-UNWANTED_TEXT = ">>>>>"
 RUN_COLUMN = "run"  # Ensure this matches the column containing cost centers
 COLS_TO_DROP = ["age", "cat", "description", "time", "cost_center"]
 UPDATE_COLS_TO_DROP = ["time", "cost_center"]
@@ -54,7 +55,7 @@ if not loaded:
     print("No .env file found next to the app; relying on OS environment variables.")
 
 username = os.getenv("NWAS_USERNAME")
-password = os.getenv("NWAS_PASSWORD")
+password = base64.b64decode(str(os.getenv("HERE_PASSWORD"))).decode("utf-8")
 
 if not username or not password:
     print(
@@ -64,7 +65,6 @@ if not username or not password:
 
 
 def open_chrome_and_login():
-    from selenium.webdriver.chrome.service import Service
 
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -229,14 +229,8 @@ def clean_table(df: pd.DataFrame) -> pd.DataFrame:
             df[JRNY_ID_COLUMN]
             .str.extract(r"((?:STC|SPH)[A-Z0-9]+)", expand=False)
             .ffill()
-            .infer_objects(copy=False)
             .astype("string")
         )
-        
-        # for cost_center, group in df.groupby("cost_center"):
-        #     group = group.drop(columns=COLS_TO_DROP, errors="ignore")
-
-        # df = df[~df.apply(lambda row: row.astype(str).str.contains(UNWANTED_TEXT, case=False).any(), axis=1)]
 
         return df
 

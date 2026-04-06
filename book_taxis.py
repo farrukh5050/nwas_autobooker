@@ -132,8 +132,7 @@ def make_booking(run_data):
     jrny_ids = [r.strip() for r in your_ref_string.split("+") if r.strip()]
 
     if has_already_booked_group(jrny_ids):
-        msg = f"Skipping booking; identical journey group already booked today: {jrny_ids}"
-        print(msg)
+        print(f"Skipping booking; identical journey group already booked today: {jrny_ids}")
         return {
             "status": "skipped",
             "reason": "duplicate_group",
@@ -146,13 +145,12 @@ def make_booking(run_data):
     try:
 
         # TODO - uncomment the line below to make real API calls (currently using FakeResponse for testing) 
-        # response = session.post(booking_url, json=payload)
+        response = session.post(booking_url, json=payload)
 
-        response = FakeResponse()  # Use fake response for testing without hitting real API
+        # response = FakeResponse()  # Use fake response for testing without hitting real API
         print(f"Booking response: {response.status_code} - {response.text}")
     except requests.exceptions.RequestException as e:
-        msg = f"API request error: {e}"
-        print(msg)
+        print(f"API request error: {e}")
         return {
             "status": "error",
             "reason": "request_exception",

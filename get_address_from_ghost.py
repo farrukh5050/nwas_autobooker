@@ -419,6 +419,5 @@ def main():
 
     save_cache()
 
-# This ensures code only runs when script is executed directly
 if __name__ == "__main__":
     main()
