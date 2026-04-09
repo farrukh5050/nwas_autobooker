@@ -72,19 +72,27 @@ def update_booking_time(booking_id, new_time, jrny_ids):
         response = session.get(get_url, headers=headers, timeout=10)
         if response.status_code != 200:
             mark_jrny_ids_booked(UpdateLogsheet, jrny_ids, "skipped")
+            print(f"Failed to fetch booking details for ID: {booking_id}")
             return
 
         data = response.json()
+        # check if the capabilities has [38] in it, if it does then that means this a wheelchair job and we should keep it as a wheelchair job and remove [35] if it exists
+        capabilities = data.get("capabilities") or []
+        # Remove 35
+        capabilities = [cap for cap in capabilities if cap != 35]
+        data["capabilities"] = capabilities
         data["pickupDueTime"] = payload_time
         data["pickupDueTimeUtc"] = payload_time_utc
-        data["capabilities"] = []
 
         response2 = session.post(get_url, headers=headers, json=data, timeout=10)
         ok = response2.status_code in (200, 201)
 
         mark_jrny_ids_booked(UpdateLogsheet, jrny_ids, "updated" if ok else "skipped")
+        print(f"{'Updated' if ok else 'Failed to update'} booking ID: {booking_id}")
 
-    except Exception:
+    except Exception as e:
+        print(f"Error occurred while updating booking ID: {booking_id}")
+        print(f"Error details: {e}")
         mark_jrny_ids_booked(UpdateLogsheet, jrny_ids, "skipped")
                           
 
@@ -129,7 +137,7 @@ def find_latest_times(df, booking_map):
         if subset.empty:
             continue
         latest = subset.loc[subset["formatted_time_dt"].idxmax()]
-        jrny_ids = subset["jrny_id"].dropna().unique().tolist()
+        jrny_ids = [int(x) for x in subset["jrny_id"].dropna().tolist() if str(x).isdigit()]
         results[booking_id] = {
             "new_time": latest["formatted_time"],
             "unique_runs": runs,
@@ -202,10 +210,12 @@ def main():
         return
 
     # Step 2: proceed with normal update/cancel
+    # Create 2 dataframes, this is for jobs that need to update
     jobs_to_update_df = combined_df[
         (combined_df["type"] == "R") & (combined_df["status"] != "updated")
     ].copy()
 
+    # This is the dataframe for jobs that need to be cancelled
     jobs_to_cancel_df = combined_df[
         (combined_df["type"].isin(["ABORTED", "CANCELLED"]))
         & (combined_df["status"] != "updated")

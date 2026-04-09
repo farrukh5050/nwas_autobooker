@@ -16,10 +16,8 @@ import html
 
 # Ensure dotenv works inside PyInstaller .exe
 if getattr(sys, "frozen", False):
-    # running in a bundle
-    base_path = Path(getattr(sys, "_MEIPASS"))  # temporary folder where .env gets extracted
+    base_path = Path(sys.executable).parent
 else:
-    # running in normal Python
     base_path = Path(__file__).parent
 
 dotenv_path = base_path / ".env"
@@ -519,25 +517,30 @@ def coords_close(coord1, coord2, tol=1e-5):
 
 
 def build_office_note(passengers, extra_phones, appt_time, pickup_is_hospital):
-    if not extra_phones:
-        return f"APPT Time {appt_time}" if not pickup_is_hospital else ""
+    # Build named extra phones from passengers, skipping the first phone-bearing passenger
+    phone_bearing_passengers = []
+    for p in passengers:
+        phone = p.get("phone_number")
+        if pd.notna(phone) and str(phone).strip():
+            phone_bearing_passengers.append((str(p.get("name", "")), normalize_phone(phone)))
 
-    passenger_list = [
-        (p.get("name", "").strip(), p.get("phone no", ""))
-        for p in passengers
-        if pd.notna(p.get("phone no"))
+    named_extras = [
+        f"{name}: {phone}"
+        for name, phone in phone_bearing_passengers[1:]  # skip primary
+        if phone
     ]
 
-    named_extras = []
-    for p_name, p_phone in passenger_list[1:]:  # skip primary
-        named_extras.append(f"{p_name}: {normalize_phone(p_phone)}")
+    # Fallback: if passenger phone mapping failed but extra_phones exists, use raw extras
+    if not named_extras and extra_phones:
+        named_extras = [normalize_phone(phone) for phone in extra_phones if str(phone).strip()]
 
     if pickup_is_hospital:
-        # Hospital → ONLY name: phone
-        return " | ".join(named_extras)
+        return " | ".join(named_extras) if named_extras else f"APPT Time {appt_time}"
 
     parts = [f"APPT Time {appt_time}"]
-    parts.extend(named_extras)
+    if named_extras:
+        parts.extend(named_extras)
+
     return " | ".join(parts)
 
 def get_capabilities(passengers, pickup_is_hospital):
@@ -600,7 +603,7 @@ def generate_json_from_df(df, db_name):
                 )
                 if matched_pickup is not None:
                     g_address = (
-                        matched_pickup.get("g_from_address") or matched_pickup.get("from_address") or ""
+                        matched_pickup.get("g_from") or matched_pickup.get("from_address") or ""
                     )
                     pickup["address"]["text"] = apply_ghost_name(g_address)
                     pickup["note"] = extract_middle_note(
@@ -628,9 +631,7 @@ def generate_json_from_df(df, db_name):
                             break
                     if matched_row is not None:
                         direction, row = matched_row
-                        g_address = (
-                            row.get(f"g_{direction}") or row.get(direction) or ""
-                        )
+                        g_address = (row.get(f"g_{direction.replace('_address','')}") or row.get(direction) or "")
                         via["address"]["text"] = apply_ghost_name(g_address)
                         via["note"] = extract_middle_note(row.get(direction, ""))
                     else:
@@ -653,7 +654,7 @@ def generate_json_from_df(df, db_name):
                     None,
                 )
                 if matched_dest is not None:
-                    g_address = matched_dest.get("g_to_address") or matched_dest.get("to_address") or ""
+                    g_address = matched_dest.get("g_to") or matched_dest.get("to_address") or ""
                     destination["address"]["text"] = apply_ghost_name(g_address)
                     destination["note"] = extract_middle_note(
                         matched_dest.get("to_address") or ""
@@ -668,6 +669,7 @@ def generate_json_from_df(df, db_name):
                 name, primary_phone, job_note, ref, extra_phones, mob = build_metadata(
                     passengers
                 )
+
                 pickup_text = routing["pickup"]["address"]["text"]
                 pickup_coord = routing["pickup"]["address"]["coordinate"]
                 dest_coord = routing["destination"]["address"]["coordinate"]

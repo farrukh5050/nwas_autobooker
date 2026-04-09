@@ -1,6 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 a = Analysis(
     ['run_all.py'],
     pathex=[],
@@ -21,7 +20,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='run_all',
+    name='StreetCars_NWAS',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -40,5 +39,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='run_all',
+    name='StreetCars_NWAS',
 )

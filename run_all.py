@@ -7,8 +7,9 @@ from datetime import datetime, timedelta, time as dtime
 from zoneinfo import ZoneInfo  # Python 3.9+
 import pytz
 from sqlalchemy import delete, select
-from database.database import init_db, init_sqlite, session_scope
+from database.database import init_db, init_sqlite, session_scope, checkpoint_db
 from database.models import NwasLogsheet, UpdateLogsheet, RebookJobs, AppMeta
+from sqlalchemy import inspect
 
 # === Tasks ===
 from get_nwas_data import main as run_nwas
@@ -76,7 +77,6 @@ handler = RotatingFileHandler(
     backupCount=LOG_BACKUP_COUNT,
 )
 logging.getLogger().addHandler(handler)
-
 
 
 def within_operating_hours(dt: datetime) -> bool:
@@ -174,6 +174,7 @@ def main() -> None:
                 except Exception as e:
                     print(f"{name} failed: {e!r}")
 
+            checkpoint_db()
             # Sleep until next cycle or cutoff
             remaining_today = seconds_until_end(now())
             sleep_for = (

@@ -1,8 +1,19 @@
 from contextlib import contextmanager
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import text
+from pathlib import Path
+import sys
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./xl_data/app_database.db"
+if getattr(sys, "frozen", False):
+    project_root = Path(sys.executable).parent
+else:
+    project_root = Path(__file__).resolve().parent.parent
+
+db_path = project_root / "xl_data" / "app_database.db"
+db_path.parent.mkdir(parents=True, exist_ok=True)
+
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{db_path.as_posix()}"
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
@@ -32,3 +43,8 @@ def session_scope():
         raise
     finally:
         db.close()
+
+
+def checkpoint_db():
+    with engine.begin() as conn:
+        conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE);"))

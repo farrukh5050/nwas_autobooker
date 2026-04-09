@@ -361,7 +361,7 @@ def save_rebooks_to_db(df: pd.DataFrame) -> int:
 
     return inserted
 
-def mark_jrny_ids_booked(db_name, jrny_ids: list[int | str], status: str) -> int:
+def mark_jrny_ids_booked(db_model, jrny_ids: list[int | str], status: str) -> int:
     """Mark the given jrny_ids as booked in the database."""
     if not jrny_ids:
         return 0
@@ -376,12 +376,17 @@ def mark_jrny_ids_booked(db_name, jrny_ids: list[int | str], status: str) -> int
     if not cleaned:
         return 0
     
-    with session_scope() as session:
-        stmt = (
-            update(db_name)
-            .where(db_name.jrny_id.in_(cleaned))
-            .values(status=status)
-        )
-        
-        res = cast(CursorResult, session.execute(stmt))
-        return res.rowcount
+    try:
+        with session_scope() as session:
+            stmt = (
+                update(db_model)
+                .where(db_model.jrny_id.in_(cleaned))
+                .values(status=status)
+            )
+
+            res = cast(CursorResult, session.execute(stmt))
+            return res.rowcount
+
+    except Exception as e:
+        print(f"[DB ERROR] Failed updating {db_model.__name__}: {e}")
+        return 0

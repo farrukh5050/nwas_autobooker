@@ -17,10 +17,8 @@ from database.db_conn import mark_jrny_ids_booked
 
 # Ensure dotenv works inside PyInstaller .exe
 if getattr(sys, "frozen", False):
-    # running in a bundle
-    base_path = Path(getattr(sys,"_MEIPASS"))  # temporary folder where .env gets extracted
+    base_path = Path(sys.executable).parent
 else:
-    # running in normal Python
     base_path = Path(__file__).parent
 
 dotenv_path = base_path / ".env"
