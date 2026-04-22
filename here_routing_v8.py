@@ -66,6 +66,13 @@ time_adjust_map = {
 }
 
 
+def shift_datetime_one_year(value):
+    try:
+        return value.replace(year=value.year + 1)
+    except ValueError:
+        return value.replace(month=2, day=28, year=value.year + 1)
+
+
 def apply_ghost_name(name):
     if not isinstance(name, str):
         return name
@@ -76,6 +83,25 @@ def apply_ghost_name(name):
         if pts_name in name_clean:
             return ghost_name_map[pts_name]
     return name
+
+
+def trim_address_text(text, town="", post_code=""):
+    if not text:
+        return ""
+
+    trimmed_text = str(text).strip()
+    parts = [part.strip() for part in trimmed_text.split(",")]
+
+    while parts and post_code and parts[-1].lower() == str(post_code).strip().lower():
+        parts.pop()
+
+    while parts and town and parts[-1].lower() == str(town).strip().lower():
+        parts.pop()
+
+    if not parts:
+        return ""
+
+    return ", ".join(parts)
 
 
 def decode_zone(zone_obj):
@@ -197,9 +223,16 @@ def build_metadata(passengers):
     primary_phone = phones[0] if phones else ""
     extra_phones = phones[1:] if len(phones) > 1 else []
 
+
     job_note = "; ".join(
-        [clean_note(p.get("notes", "")) for p in passengers if pd.notna(p.get("notes"))]
-    )
+    clean_note(p.get("notes"))
+    for p in passengers
+        if p.get("notes") 
+        and str(p.get("notes")).strip().lower() != "nan")
+
+    if not job_note:
+        job_note = "Please go inside"
+
     refs = " + ".join(
         [str(int(p.get("jrny_id"))) for p in passengers if pd.notna(p.get("jrny_id"))]
     )
@@ -209,71 +242,13 @@ def build_metadata(passengers):
     return names, primary_phone, job_note, refs, extra_phones, mob
 
 
-def adjust_pickup_time_next_year(
-    passengers, pickup_is_hospital, pickup_coord, dest_coord, pickup_text
-):
-    # 1) Collect (passenger, time) pairs safely
-    passenger_times = []
-    for p in passengers:
-        ft = p.get("formatted_time")
-        if pd.notna(ft):
-            passenger_times.append((p, pd.to_datetime(ft)))
-
-    # 2) Filter times for hospital pickups to only those matching the pickup_text
-    if pickup_is_hospital:
-        times = [
-            t
-            for p, t in passenger_times
-            if apply_ghost_name(str(p.get("from_address", ""))) == pickup_text
-        ]
-    else:
-        times = [t for _, t in passenger_times]
-
-    if not times:
-        return None
-
-    # Base time = earliest relevant time
-    base_time = min(times)
-
-    # --- NEW: always push year forward by +1 ---
-    try:
-        base_time = base_time.replace(year=base_time.year + 1)
-    except ValueError:
-        # handles leap-day (Feb 29 → Feb 28 next year if not leap year)
-        base_time = base_time.replace(month=2, day=28, year=base_time.year + 1)
-
-    # 3) Apply distance-based offset FIRST (only for non-hospital)
-    if not pickup_is_hospital:
-        distance = (
-            geodesic(pickup_coord, dest_coord).miles
-            if pickup_coord and dest_coord
-            else 0
-        )
-        adjust_by = timedelta(minutes=60 if distance > 10 else 45)
-        base_time = base_time - adjust_by
-
-    # 4) Apply per-passenger time adjustment from time_adjust_map (name + from match)
-    adjust_minutes = 0
-    for p in passengers:
-        p_name = str(p.get("name", "")).strip()
-        p_from = str(p.get("from_address", "")).strip().lower()
-
-        if p_name in time_adjust_map:
-            mapped_addr, minutes = time_adjust_map[p_name]
-            mapped_addr = str(mapped_addr).strip().lower()
-            if mapped_addr == p_from:
-                adjust_minutes += minutes
-                break  # only apply first matching adjustment
-
-    if adjust_minutes != 0:
-        base_time = base_time + timedelta(minutes=adjust_minutes)
-
-    # 5) Final ISO timestamp
-    return base_time.isoformat()
-
-
 def adjust_pickup_time(
-    passengers, pickup_is_hospital, pickup_coord, dest_coord, pickup_text
+    passengers,
+    pickup_is_hospital,
+    pickup_coord,
+    dest_coord,
+    pickup_text,
+    shift_year=False,
 ):
     # 1) Collect (passenger, time) pairs safely
     passenger_times = []
@@ -297,6 +272,9 @@ def adjust_pickup_time(
 
     # Base time = earliest relevant time
     base_time = min(times)
+
+    if shift_year:
+        base_time = shift_datetime_one_year(base_time)
 
     # 3) Apply distance-based offset FIRST (only for non-hospital)
     if not pickup_is_hospital:
@@ -543,6 +521,7 @@ def build_office_note(passengers, extra_phones, appt_time, pickup_is_hospital):
 
     return " | ".join(parts)
 
+
 def get_capabilities(passengers, pickup_is_hospital):
     has_w1 = any(
         str(p.get("mob")).strip().upper() == "W1"
@@ -563,7 +542,185 @@ def get_capabilities(passengers, pickup_is_hospital):
 
     return []
 
+
+def build_runs_to_process(unique_run, run_df):
+    specials = run_df[run_df["esc"].astype(str).str.contains("R=1|M=1", na=False)]
+    if len(specials) <= 1:
+        return [(unique_run, run_df)]
+
+    return [
+        (f"{unique_run}_{chr(65 + i)}", run_df.loc[[idx]])
+        for i, idx in enumerate(specials.index)
+    ]
+
+
+def find_matching_row_by_coord(rdf, coord, coord_column):
+    return next(
+        (
+            row
+            for _, row in rdf.iterrows()
+            if row[coord_column] and coords_close(row[coord_column], coord)
+        ),
+        None,
+    )
+
+
+def format_fallback_text(point):
+    coord = point["address"]["coordinate"]
+    return (
+        f"{point['address']['town']}, "
+        f"{coord['latitude']:.6f}, {coord['longitude']:.6f}"
+    )
+
+
+def update_point_from_row(point, row, direction):
+    if row is not None:
+        ghost_key = f"g_{direction.replace('_address', '')}"
+        g_address = row.get(ghost_key) or row.get(direction) or ""
+        postcode_key = "from_post_code" if "from" in direction else "to_post_code"
+        town_key = "from_town" if "from" in direction else "to_town"
+        town = row.get(town_key, "")
+        post_code = row.get(postcode_key, "")
+        point["address"]["text"] = trim_address_text(
+            apply_ghost_name(g_address),
+            town=town,
+            post_code=post_code,
+        )
+        point["note"] = extract_middle_note(row.get(direction) or "")
+        point["address"]["postCode"] = post_code
+        return
+
+    point["address"]["text"] = apply_ghost_name(format_fallback_text(point))
+    point["note"] = ""
+    point["address"]["postCode"] = ""
+
+
+def enrich_pickup_point(rdf, pickup):
+    pickup_coord = (
+        pickup["address"]["coordinate"]["latitude"],
+        pickup["address"]["coordinate"]["longitude"],
+    )
+    matched_pickup = find_matching_row_by_coord(rdf, pickup_coord, "from_coord_parsed")
+    update_point_from_row(pickup, matched_pickup, "from_address")
+
+
+def enrich_via_points(rdf, vias):
+    for via in vias:
+        via_coord = (
+            via["address"]["coordinate"]["latitude"],
+            via["address"]["coordinate"]["longitude"],
+        )
+        matched_row = None
+        for _, row in rdf.iterrows():
+            row_from_coord = row["from_coord_parsed"]
+            row_to_coord = row["to_coord_parsed"]
+            if row_from_coord and coords_close(row_from_coord, via_coord):
+                matched_row = ("from_address", row)
+                break
+            if row_to_coord and coords_close(row_to_coord, via_coord):
+                matched_row = ("to_address", row)
+                break
+
+        if matched_row is not None:
+            direction, row = matched_row
+            update_point_from_row(via, row, direction)
+        else:
+            update_point_from_row(via, None, "to_address")
+
+
+def enrich_destination_point(rdf, destination):
+    dest_coord = (
+        destination["address"]["coordinate"]["latitude"],
+        destination["address"]["coordinate"]["longitude"],
+    )
+    matched_dest = find_matching_row_by_coord(rdf, dest_coord, "to_coord_parsed")
+    update_point_from_row(destination, matched_dest, "to_address")
+
+
+def enrich_routing_points(rdf, routing):
+    enrich_pickup_point(rdf, routing["pickup"])
+    enrich_via_points(rdf, routing["vias"])
+    enrich_destination_point(rdf, routing["destination"])
+    return routing
+
+
+def get_pickup_due_time(passengers, routing):
+    pickup_text = routing["pickup"]["address"]["text"]
+    pickup_coord = routing["pickup"]["address"]["coordinate"]
+    dest_coord = routing["destination"]["address"]["coordinate"]
+    pickup_is_hospital = is_hospital(pickup_text)
+
+    pickup_due_time = adjust_pickup_time(
+        passengers,
+        pickup_is_hospital,
+        (pickup_coord["latitude"], pickup_coord["longitude"]),
+        (dest_coord["latitude"], dest_coord["longitude"]),
+        pickup_text,
+        shift_year=TEST_MODE,
+    )
+
+    if pickup_due_time:
+        return pickup_due_time, pickup_is_hospital
+
+    try:
+        base = pd.to_datetime(passengers[0]["formatted_time"])
+    except Exception:
+        base = datetime.now()
+
+    if TEST_MODE:
+        base = shift_datetime_one_year(base)
+
+    return base.isoformat(), pickup_is_hospital
+
+
+def build_booking_payload(routing, passengers):
+    name, primary_phone, job_note, ref, extra_phones, _ = build_metadata(passengers)
+    pickup_due_time, pickup_is_hospital = get_pickup_due_time(passengers, routing)
+    appt_time = pd.to_datetime(passengers[0]["formatted_time"]).strftime("%H:%M")
+    office_note = build_office_note(
+        passengers=passengers,
+        extra_phones=extra_phones,
+        appt_time=appt_time,
+        pickup_is_hospital=pickup_is_hospital,
+    )
+
+    return {
+        "capabilities": get_capabilities(passengers, pickup_is_hospital),
+        "companyId": COMPANY_ID,
+        "customerId": CUSTOMER_ID,
+        "pickup": routing["pickup"],
+        "vias": routing["vias"],
+        "destination": {
+            "address": routing["destination"]["address"],
+            "completed": False,
+            "note": routing["destination"]["note"],
+        },
+        "driverNote": job_note,
+        "name": name,
+        # "telephoneNumber": primary_phone,
+        "pickupDueTime": pickup_due_time,
+        "yourReferences": {"yourReference1": ref},
+        "officeNote": f"{office_note} : primary {primary_phone}",
+        "hold": False,
+        "driverConstraints": {
+            "forbiddenDrivers": FORBIDDEN_DRIVERS,
+            "forbiddenVehicles": FORBIDDEN_VEHICLES,
+        },
+    }
+
+
+def book_run(payload, db_name):
+    booking_response = make_booking(payload)
+    status = booking_response.get("status")
+    jrny_ids = booking_response.get("jrny_ids", [])
+
+    if status:
+        mark_jrny_ids_booked(db_name, jrny_ids=jrny_ids, status=status)
+    return booking_response
+
+
 def generate_json_from_df(df, db_name):
+    # create a column with unique run names e.g STCPLPM2_Run 1
     df["unique_run"] = df["cost_center"].astype(str) + "_" + df["run"].astype(str)
 
     # Pre-parse coordinates once
@@ -573,181 +730,19 @@ def generate_json_from_df(df, db_name):
     results = {}
 
     for unique_run, run_df in df.groupby("unique_run"):
-        specials = run_df[run_df["esc"].astype(str).str.contains("R=1|M=1", na=False)]
-        runs_to_process = (
-            [
-                (f"{unique_run}_{chr(65 + i)}", run_df.loc[[idx]])
-                for i, idx in enumerate(specials.index)
-            ]
-            if len(specials) > 1
-            else [(unique_run, run_df)]
-        )
+        runs_to_process = build_runs_to_process(unique_run, run_df)
 
         for run_name, rdf in runs_to_process:
             try:
-                routing = classify_run_addresses_with_corrected_vias(rdf)
-
-                pickup = routing["pickup"]
-                pickup_coord = (
-                    pickup["address"]["coordinate"]["latitude"],
-                    pickup["address"]["coordinate"]["longitude"],
+                routing = enrich_routing_points(
+                    rdf,
+                    classify_run_addresses_with_corrected_vias(rdf),
                 )
-                matched_pickup = next(
-                    (
-                        row
-                        for _, row in rdf.iterrows()
-                        if row["from_coord_parsed"]
-                        and coords_close(row["from_coord_parsed"], pickup_coord)
-                    ),
-                    None,
-                )
-                if matched_pickup is not None:
-                    g_address = (
-                        matched_pickup.get("g_from") or matched_pickup.get("from_address") or ""
-                    )
-                    pickup["address"]["text"] = apply_ghost_name(g_address)
-                    pickup["note"] = extract_middle_note(
-                        matched_pickup.get("from_address") or ""
-                    )
-                else:
-                    fallback_text = f"{pickup['address']['town']}, {pickup_coord[0]:.6f}, {pickup_coord[1]:.6f}"
-                    pickup["address"]["text"] = apply_ghost_name(fallback_text)
-                    pickup["note"] = ""
-
-                for via in routing["vias"]:
-                    via_coord = (
-                        via["address"]["coordinate"]["latitude"],
-                        via["address"]["coordinate"]["longitude"],
-                    )
-                    matched_row = None
-                    for _, row in rdf.iterrows():
-                        row_from_coord = row["from_coord_parsed"]
-                        row_to_coord = row["to_coord_parsed"]
-                        if row_from_coord and coords_close(row_from_coord, via_coord):
-                            matched_row = ("from_address", row)
-                            break
-                        if row_to_coord and coords_close(row_to_coord, via_coord):
-                            matched_row = ("to_address", row)
-                            break
-                    if matched_row is not None:
-                        direction, row = matched_row
-                        g_address = (row.get(f"g_{direction.replace('_address','')}") or row.get(direction) or "")
-                        via["address"]["text"] = apply_ghost_name(g_address)
-                        via["note"] = extract_middle_note(row.get(direction, ""))
-                    else:
-                        fallback_text = f"{via['address']['town']}, {via_coord[0]:.6f}, {via_coord[1]:.6f}"
-                        via["address"]["text"] = apply_ghost_name(fallback_text)
-                        via["note"] = ""
-
-                destination = routing["destination"]
-                dest_coord = (
-                    destination["address"]["coordinate"]["latitude"],
-                    destination["address"]["coordinate"]["longitude"],
-                )
-                matched_dest = next(
-                    (
-                        row
-                        for _, row in rdf.iterrows()
-                        if row["to_coord_parsed"]
-                        and coords_close(row["to_coord_parsed"], dest_coord)
-                    ),
-                    None,
-                )
-                if matched_dest is not None:
-                    g_address = matched_dest.get("g_to") or matched_dest.get("to_address") or ""
-                    destination["address"]["text"] = apply_ghost_name(g_address)
-                    destination["note"] = extract_middle_note(
-                        matched_dest.get("to_address") or ""
-                    )
-                else:
-                    fallback_text = f"{destination['address']['town']}, {dest_coord[0]:.6f}, {dest_coord[1]:.6f}"
-                    destination["address"]["text"] = apply_ghost_name(fallback_text)
-                    destination["note"] = ""
-
                 passengers = rdf.to_dict(orient="records")
-
-                name, primary_phone, job_note, ref, extra_phones, mob = build_metadata(
-                    passengers
-                )
-
-                pickup_text = routing["pickup"]["address"]["text"]
-                pickup_coord = routing["pickup"]["address"]["coordinate"]
-                dest_coord = routing["destination"]["address"]["coordinate"]
-                pickup_is_hospital = is_hospital(pickup_text)
-                pickup_due_time = (
-                    adjust_pickup_time_next_year(
-                        passengers,
-                        pickup_is_hospital,
-                        (pickup_coord["latitude"], pickup_coord["longitude"]),
-                        (dest_coord["latitude"], dest_coord["longitude"]),
-                        pickup_text,
-                    )
-                    if TEST_MODE
-                    else adjust_pickup_time(
-                        passengers,
-                        pickup_is_hospital,
-                        (pickup_coord["latitude"], pickup_coord["longitude"]),
-                        (dest_coord["latitude"], dest_coord["longitude"]),
-                        pickup_text,
-                    )
-                )
-
-                # Fallback to first passenger's time if adjustment fails
-                if not pickup_due_time:
-                    try:
-                        base = pd.to_datetime(passengers[0]["formatted_time"])
-                    except Exception:
-                        base = datetime.now()
-
-                    if TEST_MODE:
-                        # mirror test-mode behavior: push one year forward
-                        try:
-                            base = base.replace(year=base.year + 1)
-                        except ValueError:
-                            base = base.replace(month=2, day=28, year=base.year + 1)
-
-                    pickup_due_time = base.isoformat()
-
-                appt_time = pd.to_datetime(rdf["formatted_time"].iloc[0]).strftime(
-                    "%H:%M"
-                )
-
-                office_note = build_office_note(
-                    passengers=passengers,
-                    extra_phones=extra_phones,
-                    appt_time=appt_time,
-                    pickup_is_hospital=pickup_is_hospital,
-                )
-                results[run_name] = {
-                    "capabilities": get_capabilities(passengers, pickup_is_hospital),
-                    "companyId": COMPANY_ID,
-                    "customerId": CUSTOMER_ID,
-                    "pickup": routing["pickup"],
-                    "vias": routing["vias"],
-                    "destination": {
-                        "address": routing["destination"]["address"],
-                        "completed": False,
-                        "note": routing["destination"]["note"],
-                    },
-                    "driverNote": job_note,
-                    "name": name,
-                    "telephoneNumber": primary_phone,
-                    "pickupDueTime": pickup_due_time,
-                    "yourReferences": {"yourReference1": ref},
-                    "officeNote": office_note,
-                    "hold": False,
-                    "driverConstraints": {
-                    "forbiddenDrivers": FORBIDDEN_DRIVERS,
-                    "forbiddenVehicles": FORBIDDEN_VEHICLES,
-    },
-                }
+                results[run_name] = build_booking_payload(routing, passengers)
 
                 try:
-                    booking_response = make_booking(results[run_name])
-                    # get booking status and if success or skipped, mark jrny_ids as booked in DB
-                    status = booking_response.get("status")
-                    if status in {"booked", "skipped"}:
-                        mark_jrny_ids_booked(db_name ,booking_response["jrny_ids"], status=status)
+                    book_run(results[run_name], db_name)
                 except Exception as e:
                     print(f"[ERROR] Booking failed for run {run_name}: {e}")
                     results[run_name]["booking_error"] = str(e)
@@ -761,22 +756,3 @@ def generate_json_from_df(df, db_name):
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
-
-
-def main():
-    excel_path = "xl_data/nwas_logsheet.xlsx"
-    xls = pd.ExcelFile(excel_path, engine="openpyxl")
-    combined_df = pd.concat(
-        [
-            pd.read_excel(xls, sheet).assign(cost_center=sheet)
-            for sheet in xls.sheet_names
-        ],
-        ignore_index=True,
-    )
-    generate_json_from_df(combined_df, db_name="NwasLogsheet")
-
-    print(f"JSON file generated: {output_path}")
-
-
-if __name__ == "__main__":
-    main()

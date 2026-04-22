@@ -1,8 +1,5 @@
 import time
-import os
 import random
-import logging
-from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta, time as dtime
 from zoneinfo import ZoneInfo  # Python 3.9+
 import pytz
@@ -27,8 +24,6 @@ INTERVAL_MINUTES = 5
 LOG_MAX_BYTES = 2_000_000
 LOG_BACKUP_COUNT = 5
 JITTER_MAX_SECONDS = 1.5
-
-os.makedirs("logs", exist_ok=True)  # Ensure logs directory exists
 
 def reset_db_once_per_day():
     """
@@ -64,19 +59,6 @@ def reset_db_once_per_day():
 # === Time helpers ===
 def now() -> datetime:
     return datetime.now(TZ)
-
-# === Logging setup ===
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-
-handler = RotatingFileHandler(
-    "logs/app_log.log",
-    maxBytes=LOG_MAX_BYTES,
-    backupCount=LOG_BACKUP_COUNT,
-)
-logging.getLogger().addHandler(handler)
 
 
 def within_operating_hours(dt: datetime) -> bool:
@@ -145,9 +127,7 @@ def main() -> None:
             # If outside hours, sleep to the next start
             wait = seconds_until_next_start(t)
             if wait > 0:
-                logging.info(
-                    f"Outside operating hours (5am–9pm). Sleeping until {now() + timedelta(seconds=wait)}"
-                )
+                print(f"Outside operating hours (5am–9pm). Sleeping until {now() + timedelta(seconds=wait)}")
                 capped_sleep(wait)
                 continue
 
@@ -185,7 +165,7 @@ def main() -> None:
             capped_sleep(sleep_for)
 
     except KeyboardInterrupt:
-        logging.warning("Stopped by user.")
+        print("Stopped by user.")
 
 
 if __name__ == "__main__":

@@ -1,14 +1,13 @@
-import re
 import os
-import pandas as pd
 import requests
 from get_address_from_ghost import fetch_address
+from urllib.parse import quote
 
 AUTOCAB_API_KEY = str(os.getenv("AUTOCAB_API_KEY"))
-#COMPANY_ID = "2281"  # Replace with your actual company ID
+COMPANY_ID = "3162"  # Replace with your actual company ID
 BASE_URL = "https://autocab-api.azure-api.net/booking/v1/addressFromText?text="
-ADDRESS_LOOKUP_URL = "https://autocab-api.azure-api.net/booking/v1/lookupAddress?text="
-PLACE_ID_URL = "https://autocab-api.azure-api.net/booking/v1/address?placeId="
+NEW_BOOKING_URL = "https://autocab-api.azure-api.net/booking/v1/booking"
+
 session = requests.Session()
 session.headers.update(
     {
@@ -18,38 +17,45 @@ session.headers.update(
     }
 )
 
-#df = pd.read_excel("xl_data/nwas_logsheet.xlsx")
+q = "21 Kestrel Drive, Bury, BL9 6JE, Bury"
 
-# df_postcode = df["to"].unique()
+url = f"{BASE_URL}{quote(q)}&companyId={COMPANY_ID}"
 
-q = "M34 5LJ, 6, Dunstar Avenue, Audenshaw, Manchester"
-fetched_address = fetch_address(q, 21380921)
-print(fetched_address)
+response = session.get(BASE_URL, params={"text":q})
+data = response.json()
 
-#url = f"{BASE_URL}{requests.utils.quote(df_postcode[0])}&companyId={COMPANY_ID}"
+new_booking_payload = {
+    "capabilities": [],
+    "companyId": 1,
+    "driverNote": "Notes for Driver",
+    "officeNote": "office note",
+    "name": "Test Job",
+    "customerId": 11915,
+    "telephoneNumber": "01613008206",
+    "pickup": {
+        "address": {
+            "bookingPriority": 0,
+            "coordinate": data["coordinate"],
+            "id": data["id"],
+            "isCustom": data["isCustom"],
+            "postCode": data["postCode"],
+            "source": data["source"],
+            "text": data["text"],
+            "town": data["town"],
+            "zone": data["zone"],
+            "zoneId": data["zoneId"]
+        },
+        "note": "Please go inside",
+        "type": "Pickup"
+    },
+    "pickupDueTime": "2027-04-16T15:00:00.699Z",
+    "pickupDueTimeUtc": "2027-04-16T15:00:00.699Z",
+    "priority": 1,
+    "priorityOverride": True,
+    "hold": False
+}
 
-# url = f"{BASE_URL}{q}"
+# print(f"payload: {new_booking_payload}")
 
-# response = session.get(BASE_URL, params={"text":q})
-# data = response.json()
-
-# print(data)
-
-#post_code_regex = r"[A-Z]{1,2}[0-9][0-9A-Z]?\s?[0-9][A-Z]{2}"
-
-# post_codes = [
-#     re.search(post_code_regex, address.upper()).group()
-#     for address in df_postcode
-#     if re.search(post_code_regex, address.upper())
-# ]
-
-# for addr in df_postcode:
-#     url = f"{BASE_URL}{requests.utils.quote(addr)}&companyId={COMPANY_ID}"
-
-#     response = session.get(url)
-#     if response.status_code == 200:
-#         data = response.json()
-#         if data.get("postCode") in post_codes:
-#             print(data["postCode"])
-#     else:
-#         print(f"Postcode {data.get('postCode')} not found in the list. {addr}")
+response = session.post(NEW_BOOKING_URL, json=new_booking_payload)
+print(response.text)

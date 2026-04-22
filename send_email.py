@@ -32,12 +32,6 @@ def send_mail(query, jrny_id=None):
     smtp_port = 465
     user = "farakh@streetcars.co.uk"
     password = EMAIL_PASSWORD
-    cc = [
-        "nic@streetcars.co.uk",
-        "transport@streetcars.co.uk",
-        "accounts@goodwinsolympic.co.uk"
-        ]
-    
     to = "farakh@streetcars.co.uk"
 
     if not all([smtp_server, smtp_port, user, password, to]):
