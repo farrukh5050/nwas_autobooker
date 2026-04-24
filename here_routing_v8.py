@@ -147,6 +147,7 @@ def is_hospital(address):
         "irving building",
         "octagon house",
         "Radcliffe Primary Care",
+        "Rochdale Infirmary"
     ]
     return any(k in address_lower for k in keywords)
 
@@ -216,11 +217,19 @@ def build_metadata(passengers):
     if has_escort:
         names += " + 1"
 
-    # collect ALL phone numbers
-    raw_phones = [p.get("phone_number") for p in passengers if pd.notna(p.get("phone_number"))]
-    phones = [normalize_phone(p) for p in raw_phones]
+    # collect all phone numbers and keep the first matching passenger as primary contact
+    phone_entries = [
+        (
+            p.get("name", "").strip(),
+            normalize_phone(p.get("phone_number")),
+        )
+        for p in passengers
+        if pd.notna(p.get("phone_number"))
+    ]
+    phones = [phone for _, phone in phone_entries]
 
     primary_phone = phones[0] if phones else ""
+    primary_contact_name = phone_entries[0][0] if phone_entries else ""
     extra_phones = phones[1:] if len(phones) > 1 else []
 
 
@@ -239,7 +248,7 @@ def build_metadata(passengers):
 
     mob = [p.get("mob") for p in passengers]
     # now we return extra_phones as well
-    return names, primary_phone, job_note, refs, extra_phones, mob
+    return names, primary_phone, primary_contact_name, job_note, refs, extra_phones, mob
 
 
 def adjust_pickup_time(
@@ -522,11 +531,15 @@ def build_office_note(passengers, extra_phones, appt_time, pickup_is_hospital):
     return " | ".join(parts)
 
 
-def get_capabilities(passengers, pickup_is_hospital):
+def get_capabilities(passengers, pickup_is_hospital, destination_is_hospital=False):
     has_w1 = any(
         str(p.get("mob")).strip().upper() == "W1"
         for p in passengers
     )
+
+    # Rule 0: hospital to hospital has no capabilities
+    if pickup_is_hospital and destination_is_hospital:
+        return []
 
     # Rule 1: W1 + hospital
     if has_w1 and pickup_is_hospital:
@@ -674,8 +687,24 @@ def get_pickup_due_time(passengers, routing):
 
 
 def build_booking_payload(routing, passengers):
-    name, primary_phone, job_note, ref, extra_phones, _ = build_metadata(passengers)
+    (
+        name,
+        primary_phone,
+        primary_contact_name,
+        job_note,
+        ref,
+        extra_phones,
+        _,
+    ) = build_metadata(passengers)
     pickup_due_time, pickup_is_hospital = get_pickup_due_time(passengers, routing)
+    destination_text = routing["destination"]["address"]["text"]
+    destination_is_hospital = is_hospital(destination_text)
+    capabilities = get_capabilities(
+        passengers,
+        pickup_is_hospital,
+        destination_is_hospital,
+    )
+    telephone_number = primary_phone if 38 in capabilities else ""
     appt_time = pd.to_datetime(passengers[0]["formatted_time"]).strftime("%H:%M")
     office_note = build_office_note(
         passengers=passengers,
@@ -683,9 +712,15 @@ def build_booking_payload(routing, passengers):
         appt_time=appt_time,
         pickup_is_hospital=pickup_is_hospital,
     )
+    office_note_parts = [office_note]
+    if primary_contact_name:
+        office_note_parts.append(primary_contact_name)
+    if primary_phone:
+        office_note_parts.append(primary_phone)
+    office_note_text = " | ".join(part for part in office_note_parts if part)
 
     return {
-        "capabilities": get_capabilities(passengers, pickup_is_hospital),
+        "capabilities": capabilities,
         "companyId": COMPANY_ID,
         "customerId": CUSTOMER_ID,
         "pickup": routing["pickup"],
@@ -697,10 +732,10 @@ def build_booking_payload(routing, passengers):
         },
         "driverNote": job_note,
         "name": name,
-        # "telephoneNumber": primary_phone,
+        "telephoneNumber": telephone_number,
         "pickupDueTime": pickup_due_time,
         "yourReferences": {"yourReference1": ref},
-        "officeNote": f"{office_note} : primary {primary_phone}",
+        "officeNote": office_note_text,
         "hold": False,
         "driverConstraints": {
             "forbiddenDrivers": FORBIDDEN_DRIVERS,

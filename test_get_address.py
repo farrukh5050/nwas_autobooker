@@ -1,7 +1,9 @@
 import os
 import requests
-from get_address_from_ghost import fetch_address
 from urllib.parse import quote
+import pandas as pd
+from get_address_from_ghost import process_file
+from database.models import NwasLogsheet
 
 AUTOCAB_API_KEY = str(os.getenv("AUTOCAB_API_KEY"))
 COMPANY_ID = "3162"  # Replace with your actual company ID
@@ -17,45 +19,38 @@ session.headers.update(
     }
 )
 
-q = "21 Kestrel Drive, Bury, BL9 6JE, Bury"
+df = pd.DataFrame(columns=[
+    "id",
+    "run",
+    "jrny_id",
+    "name",
+    "from_address",
+    "to_address",
+    "esc",
+    "mob",
+    "notes",
+    "phone_number",
+    "formatted_time",
+    "cost_center",
+    "status"
+])
 
-url = f"{BASE_URL}{quote(q)}&companyId={COMPANY_ID}"
+data = [{
+    "id": 1,
+    "run": "Run 1",
+    "jrny_id": 12345,
+    "name": "Mr Nasir Butt",
+    "from_address": "Birch Hill Hospital, Beech Ward, OL12 9RD",
+    "to_address": "Rochdale Infirmary, MRI Scan, OL12 0NB",
+    "esc": "",
+    "mob": "C1",
+    "notes": "does not speak much english",
+    "phone_number": "07383 558123",
+    "formatted_time": "2026-04-23T08:30:00+01:00",
+    "cost_center": "STCDAM",
+    "status": ""
+}]
 
-response = session.get(BASE_URL, params={"text":q})
-data = response.json()
+df = pd.DataFrame(data=data)
 
-new_booking_payload = {
-    "capabilities": [],
-    "companyId": 1,
-    "driverNote": "Notes for Driver",
-    "officeNote": "office note",
-    "name": "Test Job",
-    "customerId": 11915,
-    "telephoneNumber": "01613008206",
-    "pickup": {
-        "address": {
-            "bookingPriority": 0,
-            "coordinate": data["coordinate"],
-            "id": data["id"],
-            "isCustom": data["isCustom"],
-            "postCode": data["postCode"],
-            "source": data["source"],
-            "text": data["text"],
-            "town": data["town"],
-            "zone": data["zone"],
-            "zoneId": data["zoneId"]
-        },
-        "note": "Please go inside",
-        "type": "Pickup"
-    },
-    "pickupDueTime": "2027-04-16T15:00:00.699Z",
-    "pickupDueTimeUtc": "2027-04-16T15:00:00.699Z",
-    "priority": 1,
-    "priorityOverride": True,
-    "hold": False
-}
-
-# print(f"payload: {new_booking_payload}")
-
-response = session.post(NEW_BOOKING_URL, json=new_booking_payload)
-print(response.text)
+process_file(jobs_df=df, db_name=NwasLogsheet)

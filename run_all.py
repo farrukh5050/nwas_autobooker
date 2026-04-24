@@ -6,7 +6,6 @@ import pytz
 from sqlalchemy import delete, select
 from database.database import init_db, init_sqlite, session_scope, checkpoint_db
 from database.models import NwasLogsheet, UpdateLogsheet, RebookJobs, AppMeta
-from sqlalchemy import inspect
 
 # === Tasks ===
 from get_nwas_data import main as run_nwas

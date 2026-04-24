@@ -107,8 +107,10 @@ class FakeResponse:
 
 
 def make_booking(run_data):
+    capabilities = run_data.get("capabilities", [])
+    telephone_number = run_data.get("telephoneNumber", "") if 38 in capabilities else ""
     payload = {
-        "capabilities": run_data.get("capabilities", []),
+        "capabilities": capabilities,
         "companyId": run_data.get("companyId", COMPANY_ID),
         "customerId": run_data.get("customerId", CUSTOMER_ID),
         "pickup": run_data["pickup"],
@@ -122,8 +124,8 @@ def make_booking(run_data):
         "pickupDueTime": run_data.get(
             "pickupDueTime", uk_tz.localize(datetime.now()).isoformat()
         ),
-        "telephoneNumber": run_data.get("telephoneNumber", ""),
         "yourReferences": run_data.get("yourReferences", {"yourReference1": ""}),
+        "telephoneNumber": telephone_number,
         "officeNote": run_data.get("officeNote", ""),
         "hold": run_data.get("hold", True),
     }

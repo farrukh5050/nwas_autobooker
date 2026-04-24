@@ -260,6 +260,7 @@ def save_updates_to_db(df: pd.DataFrame) -> int:
 
         return inserted
 
+
 def save_rebooks_to_db(df: pd.DataFrame) -> int:
     if df is None or df.empty:
         return 0
@@ -360,6 +361,7 @@ def save_rebooks_to_db(df: pd.DataFrame) -> int:
                 inserted += 1
 
     return inserted
+
 
 def mark_jrny_ids_booked(db_model, jrny_ids: list[int | str], status: str) -> int:
     """Mark the given jrny_ids as booked in the database."""

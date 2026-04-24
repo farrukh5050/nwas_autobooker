@@ -9,7 +9,7 @@ import time
 import re
 from database.models import NwasLogsheet, RebookJobs
 from dotenv import load_dotenv
-from sqlalchemy import select, func, table
+from sqlalchemy import select, func
 from send_email import send_mail
 from database.database import session_scope
 from here_routing_v8 import generate_json_from_df
