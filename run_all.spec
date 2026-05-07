@@ -1,11 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_all
+
+# 🔹 Collect selenium properly (this is the magic sauce)
+selenium_datas, selenium_binaries, selenium_hiddenimports = collect_all("selenium")
+
 a = Analysis(
     ['run_all.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=[],
+    binaries=selenium_binaries,
+    datas=selenium_datas + [
+        ('.env', '.'),  # include your .env next to exe
+        ('xl_data', 'xl_data'),  # include your Excel/data folder
+        ('json_data', 'json_data'),
+    ],
+    hiddenimports=selenium_hiddenimports + [
+        "selenium.webdriver.chrome.webdriver",
+        "selenium.webdriver.chrome.service",
+        "selenium.webdriver.chrome.options",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -13,6 +26,7 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -26,18 +40,14 @@ exe = EXE(
     strip=False,
     upx=True,
     console=True,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
 )
+
 coll = COLLECT(
     exe,
     a.binaries,
+    a.zipfiles,
     a.datas,
     strip=False,
     upx=True,
-    upx_exclude=[],
-    name='StreetCars_NWAS',
+    name='StreetCars_NWAS'
 )

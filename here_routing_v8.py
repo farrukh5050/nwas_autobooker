@@ -217,19 +217,11 @@ def build_metadata(passengers):
     if has_escort:
         names += " + 1"
 
-    # collect all phone numbers and keep the first matching passenger as primary contact
-    phone_entries = [
-        (
-            p.get("name", "").strip(),
-            normalize_phone(p.get("phone_number")),
-        )
-        for p in passengers
-        if pd.notna(p.get("phone_number"))
-    ]
-    phones = [phone for _, phone in phone_entries]
+    # collect ALL phone numbers
+    raw_phones = [p.get("phone_number") for p in passengers if pd.notna(p.get("phone_number"))]
+    phones = [normalize_phone(p) for p in raw_phones]
 
     primary_phone = phones[0] if phones else ""
-    primary_contact_name = phone_entries[0][0] if phone_entries else ""
     extra_phones = phones[1:] if len(phones) > 1 else []
 
 
@@ -246,72 +238,53 @@ def build_metadata(passengers):
         [str(int(p.get("jrny_id"))) for p in passengers if pd.notna(p.get("jrny_id"))]
     )
 
-    mob = [p.get("mob") for p in passengers]
     # now we return extra_phones as well
-    return names, primary_phone, primary_contact_name, job_note, refs, extra_phones, mob
+    return names, primary_phone, job_note, refs, extra_phones
 
 
-def adjust_pickup_time(
-    passengers,
-    pickup_is_hospital,
-    pickup_coord,
-    dest_coord,
-    pickup_text,
-    shift_year=False,
-):
-    # 1) Collect (passenger, time) pairs safely
-    passenger_times = []
-    for p in passengers:
-        ft = p.get("formatted_time")
-        if pd.notna(ft):
-            passenger_times.append((p, pd.to_datetime(ft)))
+def adjust_pickup_time(passengers, pickup_is_hospital, destination_is_hospital, pickup_coord, dest_coord, pickup_text, shift_year=False,):
+    passenger_times = [
+        (p, pd.to_datetime(p.get("formatted_time")))
+        for p in passengers
+        if pd.notna(p.get("formatted_time"))
+    ]
 
-    # 2) Filter times for hospital pickups to only those matching the pickup_text
-    if pickup_is_hospital:
-        times = [
-            t
-            for p, t in passenger_times
-            if apply_ghost_name(str(p.get("from_address", ""))) == pickup_text
-        ]
-    else:
-        times = [t for _, t in passenger_times]
+    times = [
+        t for p, t in passenger_times
+        if not pickup_is_hospital
+        or apply_ghost_name(str(p.get("from_address", ""))) == pickup_text
+    ]
 
     if not times:
         return None
 
-    # Base time = earliest relevant time
     base_time = min(times)
 
     if shift_year:
         base_time = shift_datetime_one_year(base_time)
 
-    # 3) Apply distance-based offset FIRST (only for non-hospital)
-    if not pickup_is_hospital:
+    if pickup_is_hospital and destination_is_hospital:
+        base_time -= timedelta(minutes=45)
+
+    elif not pickup_is_hospital:
         distance = (
             geodesic(pickup_coord, dest_coord).miles
             if pickup_coord and dest_coord
             else 0
         )
-        adjust_by = timedelta(minutes=60 if distance > 10 else 45)
-        base_time = base_time - adjust_by
+        base_time -= timedelta(minutes=60 if distance > 10 else 45)
 
-    # 4) Apply per-passenger time adjustment from time_adjust_map (name + from match)
-    adjust_minutes = 0
     for p in passengers:
         p_name = str(p.get("name", "")).strip()
         p_from = str(p.get("from_address", "")).strip().lower()
 
-        if p_name in time_adjust_map:
-            mapped_addr, minutes = time_adjust_map[p_name]
-            mapped_addr = str(mapped_addr).strip().lower()
-            if mapped_addr == p_from:
-                adjust_minutes += minutes
-                break  # only apply first matching adjustment
+        mapped = time_adjust_map.get(p_name)
+        if mapped:
+            mapped_addr, minutes = mapped
+            if str(mapped_addr).strip().lower() == p_from:
+                base_time += timedelta(minutes=minutes)
+                break
 
-    if adjust_minutes != 0:
-        base_time = base_time + timedelta(minutes=adjust_minutes)
-
-    # 5) Final ISO timestamp
     return base_time.isoformat()
 
 
@@ -533,27 +506,22 @@ def build_office_note(passengers, extra_phones, appt_time, pickup_is_hospital):
 
 def get_capabilities(passengers, pickup_is_hospital, destination_is_hospital=False):
     has_w1 = any(
-        str(p.get("mob")).strip().upper() == "W1"
+        str(p.get("mob", "")).strip().upper() == "W1"
         for p in passengers
     )
 
-    # Rule 0: hospital to hospital has no capabilities
     if pickup_is_hospital and destination_is_hospital:
-        return []
+        return [38] if has_w1 else []
 
-    # Rule 1: W1 + hospital
-    if has_w1 and pickup_is_hospital:
-        return [35, 38]
+    capabilities = []
 
-    # (optional) W1 but NOT hospital
-    if has_w1:
-        return [38]  # N capability
-
-    # fallback (your existing logic)
     if pickup_is_hospital:
-        return CAPABILITIES # [35] default
+        capabilities.extend(CAPABILITIES)
 
-    return []
+    if has_w1:
+        capabilities.append(38)
+
+    return capabilities
 
 
 def build_runs_to_process(unique_run, run_df):
@@ -662,10 +630,12 @@ def get_pickup_due_time(passengers, routing):
     pickup_coord = routing["pickup"]["address"]["coordinate"]
     dest_coord = routing["destination"]["address"]["coordinate"]
     pickup_is_hospital = is_hospital(pickup_text)
+    destination_text = routing["destination"]["address"]["text"]
+    destination_is_hospital = is_hospital(destination_text)
 
-    pickup_due_time = adjust_pickup_time(
-        passengers,
-        pickup_is_hospital,
+    pickup_due_time = adjust_pickup_time(passengers, 
+        pickup_is_hospital, 
+        destination_is_hospital, 
         (pickup_coord["latitude"], pickup_coord["longitude"]),
         (dest_coord["latitude"], dest_coord["longitude"]),
         pickup_text,
@@ -690,12 +660,11 @@ def build_booking_payload(routing, passengers):
     (
         name,
         primary_phone,
-        primary_contact_name,
         job_note,
         ref,
         extra_phones,
-        _,
     ) = build_metadata(passengers)
+
     pickup_due_time, pickup_is_hospital = get_pickup_due_time(passengers, routing)
     destination_text = routing["destination"]["address"]["text"]
     destination_is_hospital = is_hospital(destination_text)
@@ -704,7 +673,6 @@ def build_booking_payload(routing, passengers):
         pickup_is_hospital,
         destination_is_hospital,
     )
-    telephone_number = primary_phone if 38 in capabilities else ""
     appt_time = pd.to_datetime(passengers[0]["formatted_time"]).strftime("%H:%M")
     office_note = build_office_note(
         passengers=passengers,
@@ -712,12 +680,6 @@ def build_booking_payload(routing, passengers):
         appt_time=appt_time,
         pickup_is_hospital=pickup_is_hospital,
     )
-    office_note_parts = [office_note]
-    if primary_contact_name:
-        office_note_parts.append(primary_contact_name)
-    if primary_phone:
-        office_note_parts.append(primary_phone)
-    office_note_text = " | ".join(part for part in office_note_parts if part)
 
     return {
         "capabilities": capabilities,
@@ -732,10 +694,10 @@ def build_booking_payload(routing, passengers):
         },
         "driverNote": job_note,
         "name": name,
-        "telephoneNumber": telephone_number,
+        "telephoneNumber": primary_phone,
         "pickupDueTime": pickup_due_time,
         "yourReferences": {"yourReference1": ref},
-        "officeNote": office_note_text,
+        "officeNote": office_note,
         "hold": False,
         "driverConstraints": {
             "forbiddenDrivers": FORBIDDEN_DRIVERS,
