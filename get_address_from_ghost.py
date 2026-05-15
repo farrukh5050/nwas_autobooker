@@ -5,7 +5,6 @@ import pandas as pd
 import sqlite3
 from pathlib import Path
 import sys
-import time
 import re
 from database.models import NwasLogsheet, RebookJobs
 from dotenv import load_dotenv
@@ -41,51 +40,81 @@ session.headers.update(
 
 CACHE_DB = "xl_data/address_cache.db"
 
-
-def load_cache():
-    conn = sqlite3.connect(CACHE_DB)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS addresses (
-            query TEXT PRIMARY KEY,
-            text TEXT,
-            lat REAL,
-            lng REAL,
-            zone_id INTEGER,
-            zone_name TEXT,
-            postCode TEXT,
-            town TEXT,
-            last_used DATE
-        )
-        """
+# Persistent connection in autocommit mode — writes hit disk immediately.
+cache_conn = sqlite3.connect(CACHE_DB, isolation_level=None)
+cache_conn.execute(
+    """
+    CREATE TABLE IF NOT EXISTS addresses (
+        query TEXT PRIMARY KEY,
+        text TEXT,
+        lat REAL,
+        lng REAL,
+        zone_id INTEGER,
+        zone_name TEXT,
+        postCode TEXT,
+        town TEXT,
+        last_used DATE
     )
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT query, text, lat, lng, zone_id, zone_name, postCode, town, last_used FROM addresses"
-    )
-    rows = cursor.fetchall()
-    conn.close()
+    """
+)
 
+# Per-run memo — avoids re-querying SQLite for the same address inside one run.
+run_memo: dict[str, dict] = {}
+
+def row_to_result(row):
     return {
-        row[0]: {
-            "text": row[1],
-            "coordinate": {
-                "latitude": row[2],
-                "longitude": row[3],
-            },
-            "zone": {
-                "id": row[4],
-                "name": row[5],
-            },
-            "postCode": row[6],
-            "town": row[7],
-            "last_used": row[8],
-        }
-        for row in rows
+        "text": row[0],
+        "coordinate": {"latitude": row[1], "longitude": row[2]},
+        "zone": {"id": row[3], "name": row[4]},
+        "postCode": row[5],
+        "town": row[6],
     }
 
-# Load the address cache from the database
-address_cache = load_cache()
+
+def db_lookup(keys):
+    """Return (result, set_of_keys_present_in_db) for the given candidate keys."""
+    placeholders = ",".join("?" * len(keys))
+    rows = cache_conn.execute(
+        f"SELECT query, text, lat, lng, zone_id, zone_name, postCode, town "
+        f"FROM addresses WHERE query IN ({placeholders})",
+        keys,
+    ).fetchall()
+    if not rows:
+        return None, set()
+    return row_to_result(rows[0][1:]), {r[0] for r in rows}
+
+
+def db_touch(keys):
+    if not keys:
+        return
+    placeholders = ",".join("?" * len(keys))
+    cache_conn.execute(
+        f"UPDATE addresses SET last_used = DATE('now') WHERE query IN ({placeholders})",
+        keys,
+    )
+
+
+def _db_insert(query, result):
+    coord = result.get("coordinate") or {}
+    zone = result.get("zone") or {}
+    cache_conn.execute(
+        """
+        INSERT OR REPLACE INTO addresses
+        (query, text, lat, lng, zone_id, zone_name, postCode, town, last_used)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATE('now'))
+        """,
+        (
+            query,
+            result.get("text", ""),
+            coord.get("latitude"),
+            coord.get("longitude"),
+            zone.get("id"),
+            zone.get("name"),
+            result.get("postCode", ""),
+            result.get("town", ""),
+        ),
+    )
+
 
 # Load ghost names Excel and build map (once)
 hospital_names_path = base_path / "xl_data" / "hospital names.xlsx"
@@ -101,47 +130,13 @@ except Exception as e:
     ghost_name_map = {}
 
 
-def save_cache():
-    if not address_cache:
-        return
-
-    conn = sqlite3.connect(CACHE_DB)
-    cursor = conn.cursor()
-
-    for query, result in address_cache.items():
-        coord = result.get("coordinate", {})
-        zone = result.get("zone", {})
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO addresses
-            (query, text, lat, lng, zone_id, zone_name, postCode, town, last_used)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATE('now'))
-            """,
-            (
-                query,
-                result.get("text", ""),
-                coord.get("latitude"),
-                coord.get("longitude"),
-                zone.get("id"),
-                zone.get("name"),
-                result.get("postCode", ""),
-                result.get("town", ""),
-            ),
-        )
-
-    conn.commit()
-    conn.close()
-
-
 def apply_ghost_name(name: str):
     """Return a canonical ghost name if `name` matches/contains any PTS name."""
     if not isinstance(name, str):
         return name
     name_clean = name.strip().lower()
-    # exact match
     if name_clean in ghost_name_map:
         return ghost_name_map[name_clean]
-    # substring match (longest keys first)
     for pts_name in sorted(ghost_name_map.keys(), key=len, reverse=True):
         if pts_name and pts_name in name_clean:
             return ghost_name_map[pts_name]
@@ -156,7 +151,6 @@ def _normalize_place_payload(p):
     if not isinstance(p, dict):
         return None
 
-    # Prefer provided text; fall back to a simple join
     text = p.get("text")
     if not text:
         parts = [p.get("house"), p.get("street"), p.get("town"), p.get("postCode")]
@@ -175,7 +169,6 @@ def _normalize_place_payload(p):
             "id": zone.get("id"),
             "name": zone.get("name"),
         },
-        # Some payloads use town merged in text; keep a separate town field for your cache
         "town": p.get("town") or "",
         "postCode": p.get("postCode") or "",
     }
@@ -195,8 +188,13 @@ def fetch_address_by_place_id(place_id: str):
         print(f"[WARN] placeId lookup got {r.status_code}: {r.text[:200]}")
         return None
 
-    payload = r.json()
-    return _normalize_place_payload(payload)
+    return _normalize_place_payload(r.json())
+
+
+def _store(keys, result):
+    for k in keys:
+        _db_insert(k, result)
+        run_memo[k] = result
 
 
 def fetch_address(db_name, query, jrny_id):
@@ -205,30 +203,37 @@ def fetch_address(db_name, query, jrny_id):
         return None
 
     q = apply_ghost_name(q_original)
+    keys = [q_original] if q == q_original else [q_original, q]
 
-    # cache first
-    cached = address_cache.get(q_original) or address_cache.get(q)
+    # within-run memo
+    for k in keys:
+        if k in run_memo:
+            return run_memo[k]
+
+    # SQLite cache
+    cached, present = db_lookup(keys)
     if cached:
-        address_cache[q_original] = cached
+        db_touch(list(present))
+        # backfill any missing alias so future runs hit on either key
+        for k in keys:
+            if k not in present:
+                _db_insert(k, cached)
+            run_memo[k] = cached
         return cached
 
     def resolve(data):
         candidates = data if isinstance(data, list) else [data]
-
         for item in candidates:
             if isinstance(item, dict) and item.get("coordinate"):
                 return _normalize_place_payload(item)
-
         for item in candidates:
             if isinstance(item, dict) and item.get("placeID"):
                 result = fetch_address_by_place_id(item["placeID"])
                 if result:
                     return result
-
         for item in candidates:
             if isinstance(item, dict) and item.get("fullAddress"):
                 return _normalize_place_payload(item["fullAddress"])
-
         return None
 
     # try addressFromText
@@ -237,8 +242,7 @@ def fetch_address(db_name, query, jrny_id):
         if response.status_code == 200:
             result = resolve(response.json())
             if result:
-                address_cache[q] = result
-                address_cache[q_original] = result
+                _store(keys, result)
                 return result
     except Exception as e:
         print(f"[WARN] addressFromText failed: {e}")
@@ -249,15 +253,14 @@ def fetch_address(db_name, query, jrny_id):
         if response.status_code == 200:
             result = resolve(response.json())
             if result:
-                address_cache[q] = result
-                address_cache[q_original] = result
+                _store(keys, result)
                 return result
     except Exception as e:
         print(f"[WARN] lookupAddress failed: {e}")
 
     print(f"[WARN] Could not resolve address: {q_original}")
     mark_jrny_ids_booked(db_name, [jrny_id], status="skipped")
-    
+
     send_mail(q_original, jrny_id)
 
     return None
@@ -278,7 +281,6 @@ def extract_coordinates(address_json):
 def normalize_address(addr):
     if not isinstance(addr, str):
         return ""
-    # addr = addr.lower().strip()
     addr = re.sub(
         r"(flat|apt|apartment|room|suite)[^,]*,", "", addr, flags=re.IGNORECASE
     )
@@ -350,7 +352,7 @@ def load_jobs_to_process(db_name):
         stmt = select(*columns).where(status_norm.notin_(["booked", "error", "skipped"]))
         results = session.execute(stmt).mappings().all()
         return pd.DataFrame(results)
-    
+
 
 def main():
     jobs_df = load_jobs_to_process(NwasLogsheet)
@@ -362,10 +364,8 @@ def main():
     jobs_to_rebook_df = load_jobs_to_process(RebookJobs)
     if jobs_to_rebook_df.empty:
         print("No jobs to rebook found in the database.")
-        return     
+        return
     process_file(jobs_to_rebook_df, db_name=RebookJobs)  # Process rebook jobs as well
-
-    save_cache()
 
 if __name__ == "__main__":
     main()

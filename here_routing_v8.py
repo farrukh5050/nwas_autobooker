@@ -274,6 +274,11 @@ def adjust_pickup_time(passengers, pickup_is_hospital, destination_is_hospital, 
         )
         base_time -= timedelta(minutes=60 if distance > 10 else 45)
 
+    has_w1 = any(p for p in passengers if p.get("mob") in ("W1", "EW1"))
+
+    if has_w1:
+        base_time -= timedelta(minutes=15)
+
     for p in passengers:
         p_name = str(p.get("name", "")).strip()
         p_from = str(p.get("from_address", "")).strip().lower()
@@ -505,10 +510,8 @@ def build_office_note(passengers, extra_phones, appt_time, pickup_is_hospital):
 
 
 def get_capabilities(passengers, pickup_is_hospital, destination_is_hospital=False):
-    has_w1 = any(
-        str(p.get("mob", "")).strip().upper() == "W1"
-        for p in passengers
-    )
+    # check if any of the passaengers has a W1 or EW1 in the mob capability
+    has_w1 = any(p for p in passengers if p.get("mob") in ("W1", "EW1"))
 
     if pickup_is_hospital and destination_is_hospital:
         return [38] if has_w1 else []
