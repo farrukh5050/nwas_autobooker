@@ -1,7 +1,6 @@
 import os
 import re
 import time
-import pytz
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from datetime import date, datetime
@@ -24,10 +23,6 @@ PHONE_COLUMN = "phone no"
 RUN_COLUMN = "run"  # Ensure this matches the column containing cost centers
 COLS_TO_DROP = ["age", "cat", "description", "time", "cost_center"]
 UPDATE_COLS_TO_DROP = ["time", "cost_center"]
-FILENAME = "xl_data/nwas_logsheet.xlsx"
-UPDATE_FILENAME = "xl_data/nwas_logsheet_update.xlsx"
-REBOOK_JOBS_FILENAME = "xl_data/rebook_jobs.xlsx"
-uk_tz = pytz.timezone("Europe/London")
 
 # Always prefer a .env file NEXT TO the exe (or script when not frozen)
 if getattr(sys, "frozen", False):
@@ -37,8 +32,8 @@ else:
 
 # Try these locations in order
 candidate_env_files = [
-    app_dir / ".env",  # <— folder containing the .exe
-    Path.cwd() / ".env",  # if launched from elsewhere
+    app_dir / "json_data" / "bookings_log" / ".env",  # <— folder containing the .exe
+    Path.cwd() / "json_data" / "bookings_log" / ".env",  # if launched from elsewhere
 ]
 
 loaded = False
@@ -127,7 +122,7 @@ def extract_phone_numbers(value):
 
 
 def get_today_date():
-    return datetime.now(uk_tz).strftime("%Y-%m-%d")
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def close_driver(driver):
@@ -176,11 +171,10 @@ def format_time_string(raw_time):
         return None
     try:
         hour, minute = map(int, times[-1].split(":"))  # grab the last time
-        current_date = datetime.now(uk_tz).date()  # <-- always “today”
+        current_date = datetime.now().date()  # <-- always “today”
         dt = datetime.combine(current_date, datetime.min.time()).replace(
             hour=hour, minute=minute
         )
-        dt = uk_tz.localize(dt)
         return dt.isoformat()
     except Exception as e:
         print(f"Time parse error for '{raw_time}': {e}")

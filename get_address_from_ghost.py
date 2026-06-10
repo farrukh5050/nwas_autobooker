@@ -25,9 +25,9 @@ dotenv_path = base_path / ".env"
 load_dotenv(dotenv_path)
 
 AUTOCAB_API_KEY = str(os.getenv("AUTOCAB_API_KEY"))
-BASE_URL = "https://autocab-api.azure-api.net/booking/v1/addressFromText?text="
-ADDRESS_LOOKUP_URL = "https://autocab-api.azure-api.net/booking/v1/lookupAddress?text="
-PLACE_ID_URL = "https://autocab-api.azure-api.net/booking/v1/address?placeId="
+BASE_URL = "https://autocab-api.azure-api.net/booking/v1/addressFromText"
+ADDRESS_LOOKUP_URL = "https://autocab-api.azure-api.net/booking/v1/lookupAddress"
+PLACE_ID_URL = "https://autocab-api.azure-api.net/booking/v1/address"
 
 session = requests.Session()
 session.headers.update(
@@ -58,7 +58,8 @@ cache_conn.execute(
     """
 )
 
-# Per-run memo — avoids re-querying SQLite for the same address inside one run.
+# In-memory cache for the lifetime of this Python process.
+# Under run_all.py this persists across scheduler cycles.
 run_memo: dict[str, dict] = {}
 
 def row_to_result(row):
@@ -94,7 +95,7 @@ def db_touch(keys):
     )
 
 
-def _db_insert(query, result):
+def db_insert(query, result):
     coord = result.get("coordinate") or {}
     zone = result.get("zone") or {}
     cache_conn.execute(
@@ -143,7 +144,7 @@ def apply_ghost_name(name: str):
     return name
 
 
-def _normalize_place_payload(p):
+def normalize_place_payload(p):
     """
     Normalize payloads (from either placeId lookup or fullAddress snapshot)
     into the same shape your code already uses downstream.
@@ -188,12 +189,12 @@ def fetch_address_by_place_id(place_id: str):
         print(f"[WARN] placeId lookup got {r.status_code}: {r.text[:200]}")
         return None
 
-    return _normalize_place_payload(r.json())
+    return normalize_place_payload(r.json())
 
 
-def _store(keys, result):
+def store_address_key(keys, result):
     for k in keys:
-        _db_insert(k, result)
+        db_insert(k, result)
         run_memo[k] = result
 
 
@@ -217,7 +218,7 @@ def fetch_address(db_name, query, jrny_id):
         # backfill any missing alias so future runs hit on either key
         for k in keys:
             if k not in present:
-                _db_insert(k, cached)
+                db_insert(k, cached)
             run_memo[k] = cached
         return cached
 
@@ -225,7 +226,7 @@ def fetch_address(db_name, query, jrny_id):
         candidates = data if isinstance(data, list) else [data]
         for item in candidates:
             if isinstance(item, dict) and item.get("coordinate"):
-                return _normalize_place_payload(item)
+                return normalize_place_payload(item)
         for item in candidates:
             if isinstance(item, dict) and item.get("placeID"):
                 result = fetch_address_by_place_id(item["placeID"])
@@ -233,7 +234,7 @@ def fetch_address(db_name, query, jrny_id):
                     return result
         for item in candidates:
             if isinstance(item, dict) and item.get("fullAddress"):
-                return _normalize_place_payload(item["fullAddress"])
+                return normalize_place_payload(item["fullAddress"])
         return None
 
     # try addressFromText
@@ -242,7 +243,7 @@ def fetch_address(db_name, query, jrny_id):
         if response.status_code == 200:
             result = resolve(response.json())
             if result:
-                _store(keys, result)
+                store_address_key(keys, result)
                 return result
     except Exception as e:
         print(f"[WARN] addressFromText failed: {e}")
@@ -253,7 +254,7 @@ def fetch_address(db_name, query, jrny_id):
         if response.status_code == 200:
             result = resolve(response.json())
             if result:
-                _store(keys, result)
+                store_address_key(keys, result)
                 return result
     except Exception as e:
         print(f"[WARN] lookupAddress failed: {e}")

@@ -2,7 +2,6 @@ import time
 import random
 from datetime import datetime, timedelta, time as dtime
 from zoneinfo import ZoneInfo  # Python 3.9+
-import pytz
 from sqlalchemy import delete, select
 from database.database import init_db, init_sqlite, session_scope, checkpoint_db
 from database.models import NwasLogsheet, UpdateLogsheet, RebookJobs, AppMeta
@@ -11,8 +10,6 @@ from database.models import NwasLogsheet, UpdateLogsheet, RebookJobs, AppMeta
 from get_nwas_data import main as run_nwas
 from get_address_from_ghost import main as run_ghost
 from update_booking_time import main as update_booking_time
-
-uk_tz = pytz.timezone("Europe/London")
 
 # === Config ===
 RESET_KEY = "nwas_logsheet_last_reset_date"  # stored as YYYY-MM-DD
@@ -31,7 +28,7 @@ def reset_db_once_per_day():
 
     NOTE: Assumes init_sqlite() and init_db() already ran.
     """
-    today_str = datetime.now(uk_tz).date().isoformat()
+    today_str = datetime.now().date().isoformat()
 
     with session_scope() as db:
         # Read last reset date from meta

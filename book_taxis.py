@@ -9,8 +9,6 @@ import sys
 from pathlib import Path
 from pytz import timezone
 
-uk_tz = timezone("Europe/London")
-
 # Ensure dotenv works inside PyInstaller .exe
 if getattr(sys, "frozen", False):
     # Running inside PyInstaller bundle
@@ -40,7 +38,7 @@ session.headers.update(
 )
 
 def _today_log_path():
-    today_str = datetime.now(uk_tz).strftime("%Y-%m-%d")
+    today_str = datetime.now().strftime("%Y-%m-%d")
     log_dir = "json_data/bookings_log"
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, f"bookings_log_{today_str}.json")
@@ -67,7 +65,7 @@ def has_already_booked_group(jrny_ids):
 
 
 def log_booking(jrny_ids, booking_id):
-    today_str = datetime.now(uk_tz).strftime("%Y-%m-%d")
+    today_str = datetime.now().strftime("%Y-%m-%d")
     log_dir = "json_data/bookings_log"
     os.makedirs(log_dir, exist_ok=True)  # Ensure folder exists
 
@@ -121,7 +119,7 @@ def make_booking(run_data):
         )[:250],
         "name": run_data.get("name", "AUTO BOOKING"),
         "pickupDueTime": run_data.get(
-            "pickupDueTime", uk_tz.localize(datetime.now()).isoformat()
+            "pickupDueTime", datetime.now().isoformat()
         ),
         "yourReferences": run_data.get("yourReferences", {"yourReference1": ""}),
         "telephoneNumber": run_data.get("telephoneNumber", ""),
@@ -144,9 +142,7 @@ def make_booking(run_data):
         }
 
     try:
-
-        # TODO - uncomment the line below to make real API calls (currently using FakeResponse for testing) 
-        response = session.post(booking_url, json=payload)
+        response = session.post(booking_url, json=payload, timeout=10)
 
         # response = FakeResponse()  # Use fake response for testing without hitting real API
         print(f"Booking response: {response.status_code} - {response.text}")
@@ -161,7 +157,7 @@ def make_booking(run_data):
             "raw": str(e),
         }
 
-    if response.status_code != 200:
+    if response.status_code not in (200, 201):
         return {
             "status": "error",
             "reason": "http_error",

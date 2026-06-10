@@ -397,7 +397,7 @@ def find_optimal_route_from_coords(run_df):
             f"{wp['original']};{wp['coord'][0]},{wp['coord'][1]}"
         )
 
-    response = requests.get(API_URL, params=params)
+    response = requests.get(API_URL, params=params, timeout=10)
     if response.status_code != 200:
         raise Exception(f"HERE API error: {response.status_code} — {response.text}")
 
