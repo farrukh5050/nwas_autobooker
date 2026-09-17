@@ -350,7 +350,7 @@ def load_jobs_to_process(db_name):
     with session_scope() as session:
         status_norm = func.lower(func.trim(func.coalesce(db_name.status, "")))
         columns = [c for c in db_name.__table__.columns]
-        stmt = select(*columns).where(status_norm.notin_(["booked", "error", "skipped"]))
+        stmt = select(*columns).where(status_norm.notin_(["booked", "skipped"]))
         results = session.execute(stmt).mappings().all()
         return pd.DataFrame(results)
 

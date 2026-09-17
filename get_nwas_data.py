@@ -3,21 +3,31 @@ import re
 import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from datetime import date, datetime
 from io import StringIO
 import pandas as pd
 from openpyxl import Workbook
 from dotenv import load_dotenv
 from pathlib import Path
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import (
+    ElementClickInterceptedException,
+    ElementNotInteractableException,
+    StaleElementReferenceException,
+    TimeoutException,
+)
 import sys
 import base64
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 from database.db_conn import save_to_db, save_updates_to_db, save_rebooks_to_db
 from database.database import init_db, init_sqlite
 from selenium.webdriver.chrome.service import Service
 
 # Constants
+PAGE_TIMEOUT = 20  # seconds to wait for an element to appear/become clickable
+CLICK_ATTEMPTS = 3
 JRNY_ID_COLUMN = "jrny id"
 PHONE_COLUMN = "phone no"
 RUN_COLUMN = "run"  # Ensure this matches the column containing cost centers
@@ -59,6 +69,108 @@ if not username or not password:
     sys.exit(1)
 
 
+def wait_for_page_ready(driver, timeout=PAGE_TIMEOUT):
+    """Wait until the document has finished loading (ASP.NET postbacks included)."""
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+    except TimeoutException:
+        pass  # carry on; the per-element waits below will report a real problem
+
+
+def find_visible(driver, by, value, timeout=PAGE_TIMEOUT):
+    """Wait for an element to exist and be visible, then return it."""
+    return WebDriverWait(driver, timeout).until(
+        EC.visibility_of_element_located((by, value))
+    )
+
+
+def safe_click(driver, by, value, timeout=PAGE_TIMEOUT):
+    """
+    Click an element, tolerating anything floating over it (calendar popups, postbacks).
+
+    Retries a normal click while something is covering the element, then falls back
+    to a JS click (which ignores hit-testing) so a stray overlay can't kill the run.
+    """
+    wait_for_page_ready(driver, timeout)
+    last_error = None
+
+    for _ in range(CLICK_ATTEMPTS):
+        try:
+            element = WebDriverWait(driver, timeout).until(
+                EC.element_to_be_clickable((by, value))
+            )
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});", element
+            )
+            element.click()
+            return element
+        except (
+            ElementClickInterceptedException,
+            ElementNotInteractableException,
+            StaleElementReferenceException,
+        ) as e:
+            last_error = e
+            time.sleep(1)  # let the overlay/postback settle before retrying
+
+    # Last resort: dispatch the click directly on the node.
+    try:
+        element = find_visible(driver, by, value, timeout)
+        driver.execute_script("arguments[0].click();", element)
+        print(f"Clicked {value} via JS fallback ({type(last_error).__name__}).")
+        return element
+    except Exception as fallback_error:
+        raise (last_error or fallback_error)
+
+
+def close_datepicker(driver, timeout=5):
+    """
+    Dismiss the jQuery UI calendar that opens on txtPlanDate.
+
+    While open it floats over the Options checkboxes and intercepts their clicks
+    (how tall it is — and therefore what it covers — varies by month).
+    """
+    try:
+        driver.find_element(By.ID, "txtPlanDate").send_keys(Keys.ESCAPE)
+    except Exception:
+        pass
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.invisibility_of_element_located((By.ID, "ui-datepicker-div"))
+        )
+    except TimeoutException:
+        print("Datepicker did not close; relying on click fallbacks.")
+
+
+def set_checkbox(driver, checkbox_id, checked=True):
+    """
+    Force a checkbox into the desired state.
+
+    The inputs are display:none and styled via their <label>, so the state has to
+    be read with JS and changed by clicking the label. Clicking blindly toggles —
+    and the site remembers the last submitted state — so check before clicking.
+    """
+    current = driver.execute_script(
+        "var el = document.getElementById(arguments[0]); return el ? el.checked : null;",
+        checkbox_id,
+    )
+    if current is None:
+        print(f"Checkbox {checkbox_id} not found; skipping.")
+        return
+    if current == checked:
+        return
+
+    safe_click(driver, By.CSS_SELECTOR, f"label[for='{checkbox_id}']")
+
+    new_state = driver.execute_script(
+        "var el = document.getElementById(arguments[0]); return el ? el.checked : null;",
+        checkbox_id,
+    )
+    if new_state != checked:
+        print(f"Warning: {checkbox_id} is {new_state}, expected {checked}.")
+
+
 def open_chrome_and_login():
 
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -74,31 +186,57 @@ def open_chrome_and_login():
     service = Service(log_path=os.devnull)  # suppress logs
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
-    driver.get("https://ptsed.nwas.nhs.uk/")
-    driver.find_element(By.ID, "txtUsername").send_keys(str(username))
-    driver.find_element(By.ID, "txtPassword").send_keys(str(password))
-    driver.find_element(By.ID, "cmdSubmit").click()
-    time.sleep(3)
-
     try:
+        driver.get("https://ptsed.nwas.nhs.uk/")
+        find_visible(driver, By.ID, "txtUsername").send_keys(str(username))
+        find_visible(driver, By.ID, "txtPassword").send_keys(str(password))
+        safe_click(driver, By.ID, "cmdSubmit")
+
+        # The login POST must finish before we navigate away, or the session
+        # cookie is never set and frmLogsheets bounces us back to the login page.
+        try:
+            WebDriverWait(driver, PAGE_TIMEOUT).until(
+                EC.invisibility_of_element_located((By.ID, "txtUsername"))
+            )
+        except TimeoutException:
+            print("Login page did not clear after submit; continuing to check login.")
+
         driver.get("https://ptsed.nwas.nhs.uk/frmLogsheets.aspx")
-        # Try to interact with an element that should only exist if login worked
-        date_input = driver.find_element(By.ID, "txtPlanDate")
-    except NoSuchElementException:
-        driver.quit()
-        raise SystemExit(
-            "WRONG PASSWORD or expired login — please update your .env file."
-        )
 
-    # continue normal flow if successful
-    date_input.clear()
-    date_input.send_keys(date.today().strftime("%d%m%Y"))
-    driver.find_element(By.CSS_SELECTOR, "label[for='chkIncAbort']").click()
-    driver.find_element(By.CSS_SELECTOR, "label[for='chkIncCancel']").click()
-    driver.find_element(By.ID, "cmdSubmit").click()
-    time.sleep(3)
+        try:
+            # An element that should only exist if login worked
+            date_input = find_visible(driver, By.ID, "txtPlanDate")
+        except TimeoutException:
+            raise SystemExit(
+                "WRONG PASSWORD or expired login — please update your .env file."
+            )
 
-    return driver
+        # continue normal flow if successful
+        date_input.clear()
+        date_input.send_keys(date.today().strftime("%d%m%Y"))
+        close_datepicker(driver)
+
+        # Aborted/cancelled journeys are what drive the update + rebook steps,
+        # so make sure both are included rather than toggling whatever was set.
+        set_checkbox(driver, "chkIncAbort", True)
+        set_checkbox(driver, "chkIncCancel", True)
+
+        safe_click(driver, By.ID, "cmdSubmit")
+
+        # Wait for the results to be rendered instead of a blind sleep.
+        # divLogsheetHTML is always in the DOM but never "visible", so wait on content.
+        try:
+            WebDriverWait(driver, PAGE_TIMEOUT).until(
+                lambda d: d.find_elements(By.CSS_SELECTOR, "#divLogsheetHTML table")
+            )
+        except TimeoutException:
+            print("Logsheet table did not appear in time; continuing anyway.")
+
+        return driver
+    except BaseException:
+        # Never leak the headless Chrome process if login/setup fails
+        close_driver(driver)
+        raise
 
 
 def extract_phone_numbers(value):
