@@ -270,7 +270,9 @@ def save_rebooks_to_db(df: pd.DataFrame) -> int:
 
     # Clean + fill Run
     df.loc[:, RUN_COLUMN] = df[RUN_COLUMN].replace(r"(?i)^ack$", "", regex=True)
-    df.loc[:, RUN_COLUMN] = df[RUN_COLUMN].replace(r"^\s*$", pd.NA, regex=True)
+    df.loc[:, RUN_COLUMN] = df[RUN_COLUMN].mask(
+        df[RUN_COLUMN].astype("string").str.fullmatch(r"\s*", na=False), pd.NA
+    )
     df.loc[:, RUN_COLUMN] = df[RUN_COLUMN].where(
         df[RUN_COLUMN].astype(str).str.contains("Run", na=False)
     ).ffill()

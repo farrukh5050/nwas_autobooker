@@ -147,7 +147,8 @@ def is_hospital(address):
         "irving building",
         "octagon house",
         "Radcliffe Primary Care",
-        "Rochdale Infirmary"
+        "Rochdale Infirmary",
+        "MANCHESTER ROYAL INFIRMARY"
     ]
     return any(k in address_lower for k in keywords)
 
@@ -277,7 +278,7 @@ def adjust_pickup_time(passengers, pickup_is_hospital, destination_is_hospital, 
     has_w1 = any(p for p in passengers if p.get("mob") in ("W1", "EW1"))
 
     if has_w1:
-        base_time -= timedelta(minutes=15)
+        base_time -= timedelta(minutes=40)
 
     for p in passengers:
         p_name = str(p.get("name", "")).strip()

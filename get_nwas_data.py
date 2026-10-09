@@ -51,7 +51,7 @@ for p in candidate_env_files:
     if p.exists():
         load_dotenv(p)  # load this file
         loaded = True
-        print(f"Loaded environment from: {p}")
+        print(f"Loaded environment")
         break
 
 if not loaded:
@@ -60,8 +60,7 @@ if not loaded:
     print("No .env file found next to the app; relying on OS environment variables.")
 
 username = os.getenv("NWAS_USERNAME")
-password = base64.b64decode(str(os.getenv("HERE_PASSWORD"))).decode("utf-8")
-
+password = "June@2026!"
 if not username or not password:
     print(
         "NWAS_USERNAME or NWAS_PASSWORD not set. Put them in a .env next to the .exe."
@@ -333,8 +332,8 @@ def clean_table(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[:, RUN_COLUMN] = df[RUN_COLUMN].replace(
             r"(?i)^ack$", "", regex=True
         )  # remove "Ack"
-        df.loc[:, RUN_COLUMN] = df[RUN_COLUMN].replace(
-            r"^\s*$", pd.NA, regex=True
+        df.loc[:, RUN_COLUMN] = df[RUN_COLUMN].mask(
+            df[RUN_COLUMN].astype("string").str.fullmatch(r"\s*", na=False), pd.NA
         )  # convert empty to NaN
 
         df.loc[:, PHONE_COLUMN] = (
