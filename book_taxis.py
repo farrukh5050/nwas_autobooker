@@ -12,7 +12,7 @@ from pytz import timezone
 # Ensure dotenv works inside PyInstaller .exe
 if getattr(sys, "frozen", False):
     # Running inside PyInstaller bundle
-    base_path = Path(getattr(sys, "_MEIPASS"))
+    base_path = Path(sys.executable).parent
 else:
     # Running normally
     base_path = Path(__file__).parent
@@ -24,8 +24,20 @@ dotenv_path = base_path / ".env"
 load_dotenv(dotenv_path)
 
 AUTOCAB_API_KEY = str(os.getenv("AUTOCAB_API_KEY"))
-COMPANY_ID = os.getenv("COMPANY_ID")
+COMPANY_ID = int(os.getenv("COMPANY_ID", "1"))
 CUSTOMER_ID = os.getenv("CUSTOMER_ID")
+
+def parse_int_list(value):
+    if not value:
+        return []
+    return [int(x.strip()) for x in value.strip().strip("[]").split(",") if x.strip().isdigit()]
+
+
+FORBIDDEN_DRIVERS = parse_int_list(os.getenv("FORBIDDEN_DRIVERS", "1361,6355"))
+REQUESTED_DRIVERS = parse_int_list(os.getenv("REQUESTED_DRIVERS", ""))
+FORBIDDEN_VEHICLES = parse_int_list(os.getenv("FORBIDDEN_VEHICLES", "2412,3689,4312"))
+REQUESTED_VEHICLES = parse_int_list(os.getenv("REQUESTED_VEHICLES", ""))
+
 
 booking_url = "https://autocab-api.azure-api.net/booking/v1/booking"
 session = requests.Session()
@@ -108,7 +120,7 @@ def make_booking(run_data):
     capabilities = run_data.get("capabilities", [])
     payload = {
         "capabilities": capabilities,
-        "companyId": run_data.get("companyId", COMPANY_ID),
+        "companyId": int(run_data.get("companyId", COMPANY_ID)),
         "customerId": run_data.get("customerId", CUSTOMER_ID),
         "pickup": run_data["pickup"],
         "vias": run_data.get("vias", []),
@@ -125,6 +137,14 @@ def make_booking(run_data):
         "telephoneNumber": run_data.get("telephoneNumber", ""),
         "officeNote": run_data.get("officeNote", ""),
         "hold": run_data.get("hold", True),
+        "driverConstraints": run_data.get("driverConstraints", {
+            "forbiddenDrivers": FORBIDDEN_DRIVERS.copy(),
+            "requestedDrivers": REQUESTED_DRIVERS.copy(),
+        }),
+        "vehicleConstraints": run_data.get("vehicleConstraints", {
+            "forbiddenVehicles": FORBIDDEN_VEHICLES.copy(),
+            "requestedVehicles": REQUESTED_VEHICLES.copy(),
+        }),
     }
 
     your_ref_string = payload["yourReferences"]["yourReference1"]

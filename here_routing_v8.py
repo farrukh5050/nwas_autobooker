@@ -27,17 +27,20 @@ load_dotenv(dotenv_path)
 HERE_API_KEY = os.getenv("HERE_API_KEY")
 API_URL = "https://wps.hereapi.com/v8/findsequence2"
 TEST_MODE = os.getenv("TEST_MODE", "False").lower() in ("true", "1", "yes")
-COMPANY_ID=os.getenv("COMPANY_ID")
+COMPANY_ID = int(os.getenv("COMPANY_ID", "1"))
 CUSTOMER_ID=os.getenv("CUSTOMER_ID")
 
 def parse_int_list(value):
     if not value:
         return []
-    return [int(x.strip()) for x in value.split(",") if x.strip().isdigit()]
+    return [int(x.strip()) for x in value.strip().strip("[]").split(",") if x.strip().isdigit()]
 
 CAPABILITIES=parse_int_list(os.getenv("CAPABILITIES"))
-FORBIDDEN_DRIVERS = parse_int_list(os.getenv("FORBIDDEN_DRIVERS"))
-FORBIDDEN_VEHICLES = parse_int_list(os.getenv("FORBIDDEN_VEHICLES"))
+# Configure booking restrictions in .env; use [] to leave a list empty.
+FORBIDDEN_DRIVERS = parse_int_list(os.getenv("FORBIDDEN_DRIVERS", "1361,6355"))
+REQUESTED_DRIVERS = parse_int_list(os.getenv("REQUESTED_DRIVERS", ""))
+FORBIDDEN_VEHICLES = parse_int_list(os.getenv("FORBIDDEN_VEHICLES", "2412,3689,4312"))
+REQUESTED_VEHICLES = parse_int_list(os.getenv("REQUESTED_VEHICLES", ""))
 
 POSTCODE_RE = re.compile(
     r"""
@@ -704,8 +707,12 @@ def build_booking_payload(routing, passengers):
         "officeNote": office_note,
         "hold": False,
         "driverConstraints": {
-            "forbiddenDrivers": FORBIDDEN_DRIVERS,
-            "forbiddenVehicles": FORBIDDEN_VEHICLES,
+            "forbiddenDrivers": FORBIDDEN_DRIVERS.copy(),
+            "requestedDrivers": REQUESTED_DRIVERS.copy(),
+        },
+        "vehicleConstraints": {
+            "forbiddenVehicles": FORBIDDEN_VEHICLES.copy(),
+            "requestedVehicles": REQUESTED_VEHICLES.copy(),
         },
     }
 
